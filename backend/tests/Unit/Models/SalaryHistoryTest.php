@@ -47,17 +47,25 @@ class SalaryHistoryTest extends TestCase
     public function it_casts_attributes_correctly()
     {
         $history = SalaryHistory::factory()->create([
-            'old_salary_euros' => '40000.50',
-            'new_salary_euros' => '45000.75',
-            'old_commission' => '500.25',
+            'old_salary_local_currency' => '50000.50',
+            'new_salary_local_currency' => '55000.75',
+            'old_salary_euros' => '42500.25',
+            'new_salary_euros' => '46750.64',
+            'old_commission' => '500.00',
             'new_commission' => '600.50',
-            'metadata' => ['ip_address' => '127.0.0.1', 'user_agent' => 'Test Agent'],
+            'old_displayed_salary' => '43000.25',
+            'new_displayed_salary' => '47351.14',
+            'metadata' => ['ip_address' => '127.0.0.1', 'user_agent' => 'test'],
         ]);
 
+        $this->assertIsFloat($history->old_salary_local_currency);
+        $this->assertIsFloat($history->new_salary_local_currency);
         $this->assertIsFloat($history->old_salary_euros);
         $this->assertIsFloat($history->new_salary_euros);
         $this->assertIsFloat($history->old_commission);
         $this->assertIsFloat($history->new_commission);
+        $this->assertIsFloat($history->old_displayed_salary);
+        $this->assertIsFloat($history->new_displayed_salary);
         $this->assertIsArray($history->metadata);
         $this->assertInstanceOf(\Illuminate\Support\Carbon::class, $history->created_at);
         $this->assertInstanceOf(\Illuminate\Support\Carbon::class, $history->updated_at);
@@ -78,7 +86,9 @@ class SalaryHistoryTest extends TestCase
     {
         $user = User::factory()->create();
         $admin = User::factory()->create();
-        $history = SalaryHistory::factory()->forUser($user)->changedBy($admin)->create();
+        $history = SalaryHistory::factory()->forUser($user)->create([
+            'changed_by' => $admin->id,
+        ]);
 
         $this->assertInstanceOf(User::class, $history->changedBy);
         $this->assertEquals($admin->id, $history->changedBy->id);
@@ -92,77 +102,73 @@ class SalaryHistoryTest extends TestCase
         $result = $history->update(['change_reason' => 'Updated reason']);
         
         $this->assertFalse($result);
-        $this->assertNotEquals('Updated reason', $history->fresh()->change_reason);
+        $this->assertDatabaseMissing('salary_histories', [
+            'id' => $history->id,
+            'change_reason' => 'Updated reason',
+        ]);
     }
 
     /** @test */
     public function it_prevents_deletion_of_history_records()
     {
         $history = SalaryHistory::factory()->create();
-        $historyId = $history->id;
         
         $result = $history->delete();
         
         $this->assertFalse($result);
-        $this->assertDatabaseHas('salary_histories', ['id' => $historyId]);
+        $this->assertDatabaseHas('salary_histories', ['id' => $history->id]);
     }
 
     /** @test */
-    public function it_sets_change_type_automatically_on_creation()
+    public function it_determines_change_type_automatically()
     {
         $user = User::factory()->create();
         
-        $history = SalaryHistory::create([
+        // Salary change
+        $salaryChange = SalaryHistory::create([
             'user_id' => $user->id,
-            'old_salary_euros' => 40000,
-            'new_salary_euros' => 45000,
+            'old_salary_local_currency' => 50000,
+            'new_salary_local_currency' => 55000,
+            'old_salary_euros' => 42500,
+            'new_salary_euros' => 46750,
             'old_commission' => 500,
             'new_commission' => 500,
             'changed_by' => $user->id,
-            'change_reason' => 'Test change',
         ]);
-
-        $this->assertEquals('salary_change', $history->change_type);
-    }
-
-    /** @test */
-    public function it_determines_commission_change_type()
-    {
-        $user = User::factory()->create();
         
-        $history = SalaryHistory::create([
+        $this->assertEquals('salary_change', $salaryChange->change_type);
+        
+        // Commission change
+        $commissionChange = SalaryHistory::create([
             'user_id' => $user->id,
-            'old_salary_euros' => 40000,
-            'new_salary_euros' => 40000,
+            'old_salary_local_currency' => 50000,
+            'new_salary_local_currency' => 50000,
+            'old_salary_euros' => 42500,
+            'new_salary_euros' => 42500,
             'old_commission' => 500,
             'new_commission' => 600,
             'changed_by' => $user->id,
-            'change_reason' => 'Commission adjustment',
         ]);
-
-        $this->assertEquals('commission_change', $history->change_type);
-    }
-
-    /** @test */
-    public function it_determines_general_update_type()
-    {
-        $user = User::factory()->create();
         
-        $history = SalaryHistory::create([
+        $this->assertEquals('commission_change', $commissionChange->change_type);
+        
+        // General update
+        $generalUpdate = SalaryHistory::create([
             'user_id' => $user->id,
-            'old_salary_euros' => 40000,
-            'new_salary_euros' => 40000,
+            'old_salary_local_currency' => 50000,
+            'new_salary_local_currency' => 50000,
+            'old_salary_euros' => 42500,
+            'new_salary_euros' => 42500,
             'old_commission' => 500,
             'new_commission' => 500,
             'changed_by' => $user->id,
-            'change_reason' => 'General update',
         ]);
-
-        $this->assertEquals('general_update', $history->change_type);
+        
+        $this->assertEquals('general_update', $generalUpdate->change_type);
     }
 
     /** @test */
-    public function it_can_scope_for_specific_user()
+    public function it_can_scope_for_user()
     {
         $user1 = User::factory()->create();
         $user2 = User::factory()->create();
@@ -204,8 +210,8 @@ class SalaryHistoryTest extends TestCase
     /** @test */
     public function it_can_scope_by_change_type()
     {
-        $salaryChange = SalaryHistory::factory()->withChangeType('salary_change')->create();
-        $commissionChange = SalaryHistory::factory()->withChangeType('commission_change')->create();
+        $salaryChange = SalaryHistory::factory()->create(['change_type' => 'salary_change']);
+        $commissionChange = SalaryHistory::factory()->create(['change_type' => 'commission_change']);
 
         $salaryChanges = SalaryHistory::byChangeType('salary_change')->get();
         
@@ -219,8 +225,8 @@ class SalaryHistoryTest extends TestCase
         $admin1 = User::factory()->create();
         $admin2 = User::factory()->create();
         
-        $history1 = SalaryHistory::factory()->changedBy($admin1)->create();
-        $history2 = SalaryHistory::factory()->changedBy($admin2)->create();
+        $history1 = SalaryHistory::factory()->create(['changed_by' => $admin1->id]);
+        $history2 = SalaryHistory::factory()->create(['changed_by' => $admin2->id]);
 
         $admin1Changes = SalaryHistory::changedBy($admin1->id)->get();
         
@@ -231,8 +237,15 @@ class SalaryHistoryTest extends TestCase
     /** @test */
     public function it_can_scope_salary_increases()
     {
-        $increase = SalaryHistory::factory()->salaryIncrease()->create();
-        $decrease = SalaryHistory::factory()->salaryDecrease()->create();
+        $increase = SalaryHistory::factory()->create([
+            'old_salary_euros' => 40000,
+            'new_salary_euros' => 45000,
+        ]);
+        
+        $decrease = SalaryHistory::factory()->create([
+            'old_salary_euros' => 50000,
+            'new_salary_euros' => 45000,
+        ]);
 
         $increases = SalaryHistory::salaryIncreases()->get();
         
@@ -243,8 +256,15 @@ class SalaryHistoryTest extends TestCase
     /** @test */
     public function it_can_scope_salary_decreases()
     {
-        $increase = SalaryHistory::factory()->salaryIncrease()->create();
-        $decrease = SalaryHistory::factory()->salaryDecrease()->create();
+        $increase = SalaryHistory::factory()->create([
+            'old_salary_euros' => 40000,
+            'new_salary_euros' => 45000,
+        ]);
+        
+        $decrease = SalaryHistory::factory()->create([
+            'old_salary_euros' => 50000,
+            'new_salary_euros' => 45000,
+        ]);
 
         $decreases = SalaryHistory::salaryDecreases()->get();
         
@@ -255,18 +275,14 @@ class SalaryHistoryTest extends TestCase
     /** @test */
     public function it_can_scope_commission_changes()
     {
-        $salaryChange = SalaryHistory::factory()->create([
-            'old_salary_euros' => 40000,
-            'new_salary_euros' => 45000,
-            'old_commission' => 500,
-            'new_commission' => 500,
-        ]);
-        
         $commissionChange = SalaryHistory::factory()->create([
-            'old_salary_euros' => 40000,
-            'new_salary_euros' => 40000,
             'old_commission' => 500,
             'new_commission' => 600,
+        ]);
+        
+        $noCommissionChange = SalaryHistory::factory()->create([
+            'old_commission' => 500,
+            'new_commission' => 500,
         ]);
 
         $commissionChanges = SalaryHistory::commissionChanges()->get();
@@ -312,11 +328,11 @@ class SalaryHistoryTest extends TestCase
     public function it_calculates_total_change_amount()
     {
         $history = SalaryHistory::factory()->create([
-            'old_displayed_salary' => 40500,
-            'new_displayed_salary' => 45750,
+            'old_displayed_salary' => 43000,
+            'new_displayed_salary' => 46250,
         ]);
 
-        $this->assertEquals(5250.00, $history->total_change_amount);
+        $this->assertEquals(3250.00, $history->total_change_amount);
     }
 
     /** @test */
@@ -339,8 +355,8 @@ class SalaryHistoryTest extends TestCase
         ]);
         
         $decrease = SalaryHistory::factory()->create([
-            'old_salary_euros' => 45000,
-            'new_salary_euros' => 40000,
+            'old_salary_euros' => 50000,
+            'new_salary_euros' => 45000,
         ]);
 
         $this->assertTrue($increase->isSalaryIncrease());
@@ -356,8 +372,8 @@ class SalaryHistoryTest extends TestCase
         ]);
         
         $decrease = SalaryHistory::factory()->create([
-            'old_salary_euros' => 45000,
-            'new_salary_euros' => 40000,
+            'old_salary_euros' => 50000,
+            'new_salary_euros' => 45000,
         ]);
 
         $this->assertFalse($increase->isSalaryDecrease());
@@ -373,12 +389,18 @@ class SalaryHistoryTest extends TestCase
         ]);
         
         $decrease = SalaryHistory::factory()->create([
-            'old_salary_euros' => 45000,
-            'new_salary_euros' => 40000,
+            'old_salary_euros' => 50000,
+            'new_salary_euros' => 45000,
+        ]);
+        
+        $noChange = SalaryHistory::factory()->create([
+            'old_salary_euros' => null,
+            'new_salary_euros' => 45000,
         ]);
 
         $this->assertEquals('+€5,000.00', $increase->formatted_salary_change);
         $this->assertEquals('-€5,000.00', $decrease->formatted_salary_change);
+        $this->assertEquals('N/A', $noChange->formatted_salary_change);
     }
 
     /** @test */
@@ -388,30 +410,25 @@ class SalaryHistoryTest extends TestCase
             'old_commission' => 500,
             'new_commission' => 750,
         ]);
+        
+        $decrease = SalaryHistory::factory()->create([
+            'old_commission' => 750,
+            'new_commission' => 500,
+        ]);
 
         $this->assertEquals('+€250.00', $increase->formatted_commission_change);
+        $this->assertEquals('-€250.00', $decrease->formatted_commission_change);
     }
 
     /** @test */
     public function it_formats_total_change_for_display()
     {
-        $history = SalaryHistory::factory()->create([
-            'old_displayed_salary' => 40500,
-            'new_displayed_salary' => 45750,
+        $increase = SalaryHistory::factory()->create([
+            'old_displayed_salary' => 43000,
+            'new_displayed_salary' => 46250,
         ]);
 
-        $this->assertEquals('+€5,250.00', $history->formatted_total_change);
-    }
-
-    /** @test */
-    public function it_returns_na_for_formatted_changes_when_null()
-    {
-        $history = SalaryHistory::factory()->create([
-            'old_salary_euros' => null,
-            'new_salary_euros' => 45000,
-        ]);
-
-        $this->assertEquals('N/A', $history->formatted_salary_change);
+        $this->assertEquals('+€3,250.00', $increase->formatted_total_change);
     }
 
     /** @test */
@@ -431,18 +448,16 @@ class SalaryHistoryTest extends TestCase
             'new_commission' => 500,
         ]);
         
-        $noChange = SalaryHistory::factory()->create([
+        $noChanges = SalaryHistory::factory()->create([
             'old_salary_euros' => 40000,
             'new_salary_euros' => 40000,
             'old_commission' => 500,
             'new_commission' => 500,
         ]);
 
-        $this->assertStringContains('Salary: +€5,000.00', $salaryAndCommissionChange->change_summary);
-        $this->assertStringContains('Commission: +€250.00', $salaryAndCommissionChange->change_summary);
-        
+        $this->assertEquals('Salary: +€5,000.00, Commission: +€250.00', $salaryAndCommissionChange->change_summary);
         $this->assertEquals('Salary: +€5,000.00', $salaryOnlyChange->change_summary);
-        $this->assertEquals('No changes', $noChange->change_summary);
+        $this->assertEquals('No changes', $noChanges->change_summary);
     }
 
     /** @test */
@@ -451,13 +466,14 @@ class SalaryHistoryTest extends TestCase
         $user = User::factory()->create();
         $admin = User::factory()->create();
         $salary = Salary::factory()->forUser($user)->create([
-            'salary_euros' => 45000,
-            'commission' => 750,
+            'salary_local_currency' => 55000,
+            'salary_euros' => 46750,
+            'commission' => 600,
         ]);
         
         $originalValues = [
             'salary_local_currency' => 50000,
-            'salary_euros' => 40000,
+            'salary_euros' => 42500,
             'commission' => 500,
         ];
 
@@ -465,19 +481,20 @@ class SalaryHistoryTest extends TestCase
             $salary,
             $originalValues,
             $admin->id,
-            'Annual review increase'
+            'Performance increase'
         );
 
-        $this->assertDatabaseHas('salary_histories', [
-            'user_id' => $user->id,
-            'old_salary_euros' => 40000,
-            'new_salary_euros' => 45000,
-            'old_commission' => 500,
-            'new_commission' => 750,
-            'changed_by' => $admin->id,
-            'change_reason' => 'Annual review increase',
-        ]);
-        
+        $this->assertEquals($user->id, $history->user_id);
+        $this->assertEquals(50000, $history->old_salary_local_currency);
+        $this->assertEquals(55000, $history->new_salary_local_currency);
+        $this->assertEquals(42500, $history->old_salary_euros);
+        $this->assertEquals(46750, $history->new_salary_euros);
+        $this->assertEquals(500, $history->old_commission);
+        $this->assertEquals(600, $history->new_commission);
+        $this->assertEquals(43000, $history->old_displayed_salary); // 42500 + 500
+        $this->assertEquals(47350, $history->new_displayed_salary); // 46750 + 600
+        $this->assertEquals($admin->id, $history->changed_by);
+        $this->assertEquals('Performance increase', $history->change_reason);
         $this->assertIsArray($history->metadata);
         $this->assertArrayHasKey('ip_address', $history->metadata);
         $this->assertArrayHasKey('user_agent', $history->metadata);

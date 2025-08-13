@@ -85,14 +85,40 @@ class User extends Authenticatable
     }
 
     /**
-     * Scope to search users by name or email.
+     * Scope to search users by name or email with optimized indexing.
      */
     public function scopeSearch($query, string $search)
     {
         return $query->where(function ($q) use ($search) {
-            $q->where('name', 'LIKE', "%{$search}%")
-              ->orWhere('email', 'LIKE', "%{$search}%");
+            $q->whereRaw('LOWER(name) LIKE ?', ['%' . strtolower($search) . '%'])
+              ->orWhereRaw('LOWER(email) LIKE ?', ['%' . strtolower($search) . '%']);
         });
+    }
+
+    /**
+     * Scope for optimized admin queries with eager loading.
+     */
+    public function scopeForAdmin($query)
+    {
+        return $query->select([
+            'id', 'name', 'email', 'created_at', 'updated_at', 'deleted_at'
+        ])->with([
+            'salary:id,user_id,salary_local_currency,local_currency_code,salary_euros,commission,displayed_salary,effective_date,updated_at',
+            'uploadedDocuments' => function($q) {
+                $q->select('id', 'user_id', 'file_name', 'file_type', 'created_at')
+                  ->latest()
+                  ->limit(1);
+            }
+        ])->withCount(['salaryHistory', 'uploadedDocuments']);
+    }
+
+    /**
+     * Scope for dashboard statistics with minimal data.
+     */
+    public function scopeForStats($query)
+    {
+        return $query->select(['id', 'created_at', 'deleted_at'])
+                    ->with(['salary:id,user_id,salary_euros,commission,local_currency_code']);
     }
 
     /**

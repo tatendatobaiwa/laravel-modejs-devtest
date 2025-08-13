@@ -204,7 +204,29 @@ class Salary extends Model
      */
     public function scopeWithUser($query)
     {
-        return $query->with('user');
+        return $query->with('user:id,name,email,created_at');
+    }
+
+    /**
+     * Scope for optimized admin queries.
+     */
+    public function scopeForAdmin($query)
+    {
+        return $query->select([
+            'id', 'user_id', 'salary_local_currency', 'local_currency_code',
+            'salary_euros', 'commission', 'displayed_salary', 'effective_date',
+            'created_at', 'updated_at'
+        ])->with('user:id,name,email');
+    }
+
+    /**
+     * Scope for statistics queries with minimal data.
+     */
+    public function scopeForStats($query)
+    {
+        return $query->select([
+            'id', 'salary_euros', 'commission', 'local_currency_code', 'created_at'
+        ]);
     }
 
     /**

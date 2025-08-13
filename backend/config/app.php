@@ -169,6 +169,7 @@ return [
         App\Providers\EventServiceProvider::class,
         App\Providers\RouteServiceProvider::class,
         App\Providers\RepositoryServiceProvider::class,
+        App\Providers\SecurityServiceProvider::class,
     ])->toArray(),
 
     /*
@@ -196,5 +197,24 @@ return [
     */
 
     'admin_emails' => array_filter(explode(',', env('ADMIN_EMAILS', ''))),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rate Limiting Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configuration for API rate limiting and throttling.
+    |
+    */
+
+    'throttle' => [
+        'api_requests_per_minute' => env('THROTTLE_REQUESTS_PER_MINUTE', 60),
+        'login_attempts' => env('THROTTLE_LOGIN_ATTEMPTS', 5),
+        'admin_requests_per_minute' => env('THROTTLE_ADMIN_REQUESTS_PER_MINUTE', 30),
+        'admin_global_per_minute' => env('THROTTLE_ADMIN_GLOBAL_PER_MINUTE', 100),
+        'bulk_requests_per_minute' => env('THROTTLE_BULK_REQUESTS_PER_MINUTE', 5),
+        'upload_requests_per_minute' => env('THROTTLE_UPLOAD_REQUESTS_PER_MINUTE', 10),
+        'registration_per_minute' => env('THROTTLE_REGISTRATION_PER_MINUTE', 3),
+    ],
 
 ];

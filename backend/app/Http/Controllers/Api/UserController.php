@@ -132,17 +132,13 @@ class UserController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = User::with(['salary', 'uploadedDocuments' => function($q) {
-                $q->latest()->limit(1); // Only get the most recent document
-            }]);
+            // Use optimized scope for admin queries
+            $query = User::forAdmin();
 
-            // Search functionality - case insensitive
+            // Search functionality - case insensitive with optimized query
             if ($request->filled('search')) {
                 $search = trim($request->search);
-                $query->where(function($q) use ($search) {
-                    $q->whereRaw('LOWER(name) LIKE ?', ['%' . strtolower($search) . '%'])
-                      ->orWhereRaw('LOWER(email) LIKE ?', ['%' . strtolower($search) . '%']);
-                });
+                $query->search($search);
             }
 
             // Filter by salary range
@@ -203,18 +199,22 @@ class UserController extends Controller
                 $sortDirection = 'desc';
             }
 
-            // Special handling for salary-related sorting
+            // Optimized sorting with proper indexing
             if (in_array($sortBy, ['salary_euros', 'commission', 'displayed_salary'])) {
                 $query->leftJoin('salaries', 'users.id', '=', 'salaries.user_id')
                       ->orderBy("salaries.{$sortBy}", $sortDirection)
-                      ->select('users.*');
+                      ->select('users.id', 'users.name', 'users.email', 'users.created_at', 'users.updated_at', 'users.deleted_at');
             } else {
                 $query->orderBy($sortBy, $sortDirection);
             }
 
-            // Pagination
+            // Pagination with caching for repeated requests
             $perPage = min($request->get('per_page', 20), 100); // Max 100 per page
-            $users = $query->paginate($perPage);
+            $cacheKey = 'users_index_' . md5(serialize($request->all()));
+            
+            $users = Cache::remember($cacheKey, 5, function() use ($query, $perPage) {
+                return $query->paginate($perPage);
+            });
 
             // Transform the data to include calculated fields
             $transformedUsers = $users->getCollection()->map(function ($user) {

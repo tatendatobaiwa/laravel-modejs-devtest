@@ -188,6 +188,21 @@ class SalaryHistory extends Model
     }
 
     /**
+     * Scope for optimized admin queries with minimal data.
+     */
+    public function scopeForAdmin(Builder $query): Builder
+    {
+        return $query->select([
+            'id', 'user_id', 'old_salary_euros', 'new_salary_euros',
+            'old_commission', 'new_commission', 'changed_by', 'change_reason',
+            'change_type', 'created_at'
+        ])->with([
+            'user:id,name,email',
+            'changedBy:id,name,email'
+        ]);
+    }
+
+    /**
      * Get the salary change amount in euros.
      */
     public function getSalaryChangeAmountAttribute(): ?float

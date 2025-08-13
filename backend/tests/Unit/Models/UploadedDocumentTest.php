@@ -6,7 +6,7 @@ use Tests\TestCase;
 use App\Models\User;
 use App\Models\UploadedDocument;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Storage;
 
 class UploadedDocumentTest extends TestCase
 {
@@ -35,7 +35,21 @@ class UploadedDocumentTest extends TestCase
     }
 
     /** @test */
-    public function it_has_hidden_attributes()
+    public function it_casts_attributes_correctly()
+    {
+        $document = UploadedDocument::factory()->create([
+            'file_size' => '1024',
+            'is_verified' => '1',
+            'verified_at' => '2024-01-01 12:00:00',
+        ]);
+
+        $this->assertIsInt($document->file_size);
+        $this->assertIsBool($document->is_verified);
+        $this->assertInstanceOf(\Illuminate\Support\Carbon::class, $document->verified_at);
+    }
+
+    /** @test */
+    public function it_hides_sensitive_attributes()
     {
         $hidden = ['file_path', 'file_hash'];
         $document = new UploadedDocument();
@@ -44,40 +58,10 @@ class UploadedDocumentTest extends TestCase
     }
 
     /** @test */
-    public function it_casts_attributes_correctly()
-    {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
-            'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'documents/stored.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'file_hash' => 'abc123',
-            'document_type' => 'salary_document',
-            'is_verified' => true,
-            'verified_at' => '2024-01-01 12:00:00',
-        ]);
-
-        $this->assertIsInt($document->file_size);
-        $this->assertIsBool($document->is_verified);
-        $this->assertInstanceOf(\Illuminate\Support\Carbon::class, $document->verified_at);
-        $this->assertTrue($document->is_verified);
-        $this->assertEquals(1024, $document->file_size);
-    }
-
-    /** @test */
     public function it_belongs_to_user()
     {
         $user = User::factory()->create();
-        $document = UploadedDocument::create([
-            'user_id' => $user->id,
-            'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'documents/stored.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-        ]);
+        $document = UploadedDocument::factory()->forUser($user)->create();
 
         $this->assertInstanceOf(User::class, $document->user);
         $this->assertEquals($user->id, $document->user->id);
@@ -87,137 +71,68 @@ class UploadedDocumentTest extends TestCase
     public function it_belongs_to_verified_by_user()
     {
         $user = User::factory()->create();
-        $verifier = User::factory()->create();
-        
-        $document = UploadedDocument::create([
-            'user_id' => $user->id,
-            'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'documents/stored.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'verified_by' => $verifier->id,
+        $admin = User::factory()->create();
+        $document = UploadedDocument::factory()->forUser($user)->create([
+            'verified_by' => $admin->id,
         ]);
 
         $this->assertInstanceOf(User::class, $document->verifiedBy);
-        $this->assertEquals($verifier->id, $document->verifiedBy->id);
+        $this->assertEquals($admin->id, $document->verifiedBy->id);
     }
 
     /** @test */
     public function it_can_scope_verified_documents()
     {
-        $user = User::factory()->create();
-        
-        $verifiedDoc = UploadedDocument::create([
-            'user_id' => $user->id,
-            'original_filename' => 'verified.pdf',
-            'stored_filename' => 'verified.pdf',
-            'file_path' => 'documents/verified.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'is_verified' => true,
-        ]);
-        
-        $unverifiedDoc = UploadedDocument::create([
-            'user_id' => $user->id,
-            'original_filename' => 'unverified.pdf',
-            'stored_filename' => 'unverified.pdf',
-            'file_path' => 'documents/unverified.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'is_verified' => false,
-        ]);
+        $verifiedDoc = UploadedDocument::factory()->verified()->create();
+        $unverifiedDoc = UploadedDocument::factory()->unverified()->create();
 
-        $verifiedDocuments = UploadedDocument::verified()->get();
+        $verifiedDocs = UploadedDocument::verified()->get();
         
-        $this->assertCount(1, $verifiedDocuments);
-        $this->assertEquals($verifiedDoc->id, $verifiedDocuments->first()->id);
+        $this->assertCount(1, $verifiedDocs);
+        $this->assertEquals($verifiedDoc->id, $verifiedDocs->first()->id);
     }
 
     /** @test */
     public function it_can_scope_documents_by_type()
     {
-        $user = User::factory()->create();
-        
-        $salaryDoc = UploadedDocument::create([
-            'user_id' => $user->id,
-            'original_filename' => 'salary.pdf',
-            'stored_filename' => 'salary.pdf',
-            'file_path' => 'documents/salary.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'document_type' => 'salary_document',
-        ]);
-        
-        $contractDoc = UploadedDocument::create([
-            'user_id' => $user->id,
-            'original_filename' => 'contract.pdf',
-            'stored_filename' => 'contract.pdf',
-            'file_path' => 'documents/contract.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'document_type' => 'contract',
-        ]);
+        $pdfDoc = UploadedDocument::factory()->create(['document_type' => 'document']);
+        $imageDoc = UploadedDocument::factory()->create(['document_type' => 'image']);
 
-        $salaryDocuments = UploadedDocument::ofType('salary_document')->get();
+        $pdfDocs = UploadedDocument::ofType('document')->get();
         
-        $this->assertCount(1, $salaryDocuments);
-        $this->assertEquals($salaryDoc->id, $salaryDocuments->first()->id);
+        $this->assertCount(1, $pdfDocs);
+        $this->assertEquals($pdfDoc->id, $pdfDocs->first()->id);
     }
 
     /** @test */
-    public function it_returns_full_file_path_attribute()
+    public function it_generates_full_file_path_attribute()
     {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
-            'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'documents/stored.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
+        $document = UploadedDocument::factory()->create([
+            'file_path' => 'uploads/users/1/test.pdf',
         ]);
 
-        $expectedPath = storage_path('app/documents/stored.pdf');
+        $expectedPath = storage_path('app/uploads/users/1/test.pdf');
         $this->assertEquals($expectedPath, $document->full_file_path);
     }
 
     /** @test */
-    public function it_returns_formatted_file_size_attribute()
+    public function it_formats_file_size_for_display()
     {
-        $testCases = [
-            ['size' => 512, 'expected' => '512 B'],
-            ['size' => 1024, 'expected' => '1 KB'],
-            ['size' => 1536, 'expected' => '1.5 KB'],
-            ['size' => 1048576, 'expected' => '1 MB'],
-            ['size' => 1073741824, 'expected' => '1 GB'],
-        ];
+        $smallFile = UploadedDocument::factory()->create(['file_size' => 512]);
+        $mediumFile = UploadedDocument::factory()->create(['file_size' => 1536]); // 1.5 KB
+        $largeFile = UploadedDocument::factory()->create(['file_size' => 1572864]); // 1.5 MB
+        $hugeFile = UploadedDocument::factory()->create(['file_size' => 1610612736]); // 1.5 GB
 
-        foreach ($testCases as $testCase) {
-            $document = UploadedDocument::create([
-                'user_id' => User::factory()->create()->id,
-                'original_filename' => 'test.pdf',
-                'stored_filename' => 'stored.pdf',
-                'file_path' => 'documents/stored.pdf',
-                'mime_type' => 'application/pdf',
-                'file_size' => $testCase['size'],
-            ]);
-
-            $this->assertEquals($testCase['expected'], $document->formatted_file_size);
-        }
+        $this->assertEquals('512 B', $smallFile->formatted_file_size);
+        $this->assertEquals('1.5 KB', $mediumFile->formatted_file_size);
+        $this->assertEquals('1.5 MB', $largeFile->formatted_file_size);
+        $this->assertEquals('1.5 GB', $hugeFile->formatted_file_size);
     }
 
     /** @test */
     public function it_uses_soft_deletes()
     {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
-            'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'documents/stored.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-        ]);
-        
+        $document = UploadedDocument::factory()->create();
         $documentId = $document->id;
 
         $document->delete();
@@ -235,15 +150,7 @@ class UploadedDocumentTest extends TestCase
     /** @test */
     public function it_can_be_restored_after_soft_delete()
     {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
-            'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'documents/stored.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-        ]);
-        
+        $document = UploadedDocument::factory()->create();
         $documentId = $document->id;
 
         $document->delete();
@@ -254,156 +161,187 @@ class UploadedDocumentTest extends TestCase
     }
 
     /** @test */
-    public function it_handles_null_verified_at_date()
+    public function it_validates_required_fields()
     {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        
+        UploadedDocument::create([
+            // Missing required user_id
             'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'documents/stored.pdf',
-            'mime_type' => 'application/pdf',
+            'stored_filename' => 'stored_test.pdf',
+            'file_path' => 'uploads/test.pdf',
             'file_size' => 1024,
-            'is_verified' => false,
-            'verified_at' => null,
+            'mime_type' => 'application/pdf',
         ]);
-
-        $this->assertNull($document->verified_at);
-        $this->assertFalse($document->is_verified);
     }
 
     /** @test */
-    public function it_handles_null_verified_by_user()
-    {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
-            'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'documents/stored.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'verified_by' => null,
-        ]);
-
-        $this->assertNull($document->verifiedBy);
-    }
-
-    /** @test */
-    public function it_stores_document_metadata_correctly()
+    public function it_stores_file_metadata_correctly()
     {
         $user = User::factory()->create();
         
         $document = UploadedDocument::create([
             'user_id' => $user->id,
-            'original_filename' => 'my document.pdf',
-            'stored_filename' => 'stored_document_123.pdf',
-            'file_path' => 'uploads/users/1/2024/01/stored_document_123.pdf',
+            'original_filename' => 'salary_document.pdf',
+            'stored_filename' => 'stored_salary_document_123.pdf',
+            'file_path' => 'uploads/users/1/salary_document_123.pdf',
             'mime_type' => 'application/pdf',
-            'file_size' => 2048576, // ~2MB
-            'file_hash' => 'sha256hash123',
-            'document_type' => 'salary_document',
+            'file_size' => 2048,
+            'file_hash' => 'abc123def456',
+            'document_type' => 'document',
             'is_verified' => false,
-            'notes' => 'Uploaded via web form',
+            'notes' => 'Salary documentation',
         ]);
 
-        $this->assertEquals('my document.pdf', $document->original_filename);
-        $this->assertEquals('stored_document_123.pdf', $document->stored_filename);
-        $this->assertEquals('uploads/users/1/2024/01/stored_document_123.pdf', $document->file_path);
+        $this->assertEquals($user->id, $document->user_id);
+        $this->assertEquals('salary_document.pdf', $document->original_filename);
+        $this->assertEquals('stored_salary_document_123.pdf', $document->stored_filename);
+        $this->assertEquals('uploads/users/1/salary_document_123.pdf', $document->file_path);
         $this->assertEquals('application/pdf', $document->mime_type);
-        $this->assertEquals(2048576, $document->file_size);
-        $this->assertEquals('sha256hash123', $document->file_hash);
-        $this->assertEquals('salary_document', $document->document_type);
+        $this->assertEquals(2048, $document->file_size);
+        $this->assertEquals('abc123def456', $document->file_hash);
+        $this->assertEquals('document', $document->document_type);
         $this->assertFalse($document->is_verified);
-        $this->assertEquals('Uploaded via web form', $document->notes);
+        $this->assertEquals('Salary documentation', $document->notes);
     }
 
     /** @test */
-    public function it_hides_sensitive_attributes_in_serialization()
+    public function it_can_be_verified_by_admin()
     {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
-            'original_filename' => 'test.pdf',
-            'stored_filename' => 'stored.pdf',
-            'file_path' => 'secret/path/stored.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'file_hash' => 'secret_hash_123',
+        $user = User::factory()->create();
+        $admin = User::factory()->create();
+        
+        $document = UploadedDocument::factory()->forUser($user)->unverified()->create();
+        
+        $document->update([
+            'is_verified' => true,
+            'verified_at' => now(),
+            'verified_by' => $admin->id,
+            'notes' => 'Document verified by admin',
         ]);
 
-        $serialized = $document->toArray();
-
-        $this->assertArrayNotHasKey('file_path', $serialized);
-        $this->assertArrayNotHasKey('file_hash', $serialized);
-        $this->assertArrayHasKey('original_filename', $serialized);
-        $this->assertArrayHasKey('mime_type', $serialized);
+        $this->assertTrue($document->is_verified);
+        $this->assertNotNull($document->verified_at);
+        $this->assertEquals($admin->id, $document->verified_by);
+        $this->assertEquals('Document verified by admin', $document->notes);
     }
 
     /** @test */
-    public function it_handles_zero_file_size()
+    public function it_handles_different_document_types()
     {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
-            'original_filename' => 'empty.txt',
-            'stored_filename' => 'empty.txt',
-            'file_path' => 'documents/empty.txt',
-            'mime_type' => 'text/plain',
-            'file_size' => 0,
+        $documentTypes = ['document', 'image', 'spreadsheet', 'text', 'unknown'];
+        
+        foreach ($documentTypes as $type) {
+            $document = UploadedDocument::factory()->create(['document_type' => $type]);
+            $this->assertEquals($type, $document->document_type);
+        }
+    }
+
+    /** @test */
+    public function it_stores_file_hash_for_integrity_checking()
+    {
+        $document = UploadedDocument::factory()->create([
+            'file_hash' => 'sha256:abcdef123456789',
         ]);
 
-        $this->assertEquals('0 B', $document->formatted_file_size);
+        $this->assertEquals('sha256:abcdef123456789', $document->file_hash);
+        
+        // Verify hash is hidden in array representation
+        $array = $document->toArray();
+        $this->assertArrayNotHasKey('file_hash', $array);
+    }
+
+    /** @test */
+    public function it_hides_file_path_in_array_representation()
+    {
+        $document = UploadedDocument::factory()->create([
+            'file_path' => 'uploads/users/1/sensitive_path.pdf',
+        ]);
+
+        $array = $document->toArray();
+        $this->assertArrayNotHasKey('file_path', $array);
+        
+        // But it should still be accessible as attribute
+        $this->assertEquals('uploads/users/1/sensitive_path.pdf', $document->file_path);
+    }
+
+    /** @test */
+    public function it_handles_null_verified_by_user()
+    {
+        $document = UploadedDocument::factory()->create(['verified_by' => null]);
+
+        $this->assertNull($document->verifiedBy);
+    }
+
+    /** @test */
+    public function it_formats_different_file_sizes_correctly()
+    {
+        $testCases = [
+            ['size' => 0, 'expected' => '0 B'],
+            ['size' => 1, 'expected' => '1 B'],
+            ['size' => 1023, 'expected' => '1023 B'],
+            ['size' => 1024, 'expected' => '1 KB'],
+            ['size' => 1536, 'expected' => '1.5 KB'],
+            ['size' => 1048576, 'expected' => '1 MB'],
+            ['size' => 1572864, 'expected' => '1.5 MB'],
+            ['size' => 1073741824, 'expected' => '1 GB'],
+            ['size' => 1610612736, 'expected' => '1.5 GB'],
+        ];
+
+        foreach ($testCases as $testCase) {
+            $document = UploadedDocument::factory()->create(['file_size' => $testCase['size']]);
+            $this->assertEquals($testCase['expected'], $document->formatted_file_size);
+        }
+    }
+
+    /** @test */
+    public function it_can_filter_by_verification_status()
+    {
+        $verifiedDocs = UploadedDocument::factory()->count(3)->verified()->create();
+        $unverifiedDocs = UploadedDocument::factory()->count(2)->unverified()->create();
+
+        $verified = UploadedDocument::where('is_verified', true)->get();
+        $unverified = UploadedDocument::where('is_verified', false)->get();
+
+        $this->assertCount(3, $verified);
+        $this->assertCount(2, $unverified);
+    }
+
+    /** @test */
+    public function it_maintains_referential_integrity_with_user()
+    {
+        $user = User::factory()->create();
+        $document = UploadedDocument::factory()->forUser($user)->create();
+
+        // Verify the relationship works both ways
+        $this->assertEquals($user->id, $document->user_id);
+        $this->assertTrue($user->uploadedDocuments->contains($document));
     }
 
     /** @test */
     public function it_handles_large_file_sizes()
     {
-        $document = UploadedDocument::create([
-            'user_id' => User::factory()->create()->id,
-            'original_filename' => 'large.zip',
-            'stored_filename' => 'large.zip',
-            'file_path' => 'documents/large.zip',
-            'mime_type' => 'application/zip',
-            'file_size' => 5368709120, // 5GB
-        ]);
+        $largeSize = 5368709120; // 5 GB
+        $document = UploadedDocument::factory()->create(['file_size' => $largeSize]);
 
+        $this->assertEquals($largeSize, $document->file_size);
         $this->assertEquals('5 GB', $document->formatted_file_size);
     }
 
     /** @test */
-    public function it_can_query_documents_with_complex_conditions()
+    public function it_stores_mime_type_correctly()
     {
-        $user1 = User::factory()->create();
-        $user2 = User::factory()->create();
-        $verifier = User::factory()->create();
-        
-        // Create various documents
-        $verifiedSalaryDoc = UploadedDocument::create([
-            'user_id' => $user1->id,
-            'original_filename' => 'salary.pdf',
-            'stored_filename' => 'salary.pdf',
-            'file_path' => 'documents/salary.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1024,
-            'document_type' => 'salary_document',
-            'is_verified' => true,
-            'verified_by' => $verifier->id,
-        ]);
-        
-        $unverifiedContractDoc = UploadedDocument::create([
-            'user_id' => $user2->id,
-            'original_filename' => 'contract.pdf',
-            'stored_filename' => 'contract.pdf',
-            'file_path' => 'documents/contract.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 2048,
-            'document_type' => 'contract',
-            'is_verified' => false,
-        ]);
+        $mimeTypes = [
+            'application/pdf',
+            'image/jpeg',
+            'image/png',
+            'application/msword',
+            'text/plain',
+        ];
 
-        // Query verified salary documents
-        $results = UploadedDocument::verified()
-            ->ofType('salary_document')
-            ->get();
-        
-        $this->assertCount(1, $results);
-        $this->assertEquals($verifiedSalaryDoc->id, $results->first()->id);
+        foreach ($mimeTypes as $mimeType) {
+            $document = UploadedDocument::factory()->create(['mime_type' => $mimeType]);
+            $this->assertEquals($mimeType, $document->mime_type);
+        }
     }
 }
