@@ -1,4 +1,9 @@
+// This file is deprecated - use userApi and adminApi instead
+// Keeping for backward compatibility during migration
+
 import { apiClient } from './client';
+import { userApi } from './user';
+import { adminApi } from './admin';
 
 export interface SalaryData {
   id?: number;
@@ -29,34 +34,29 @@ export interface SalaryListResponse {
   message?: string;
 }
 
+// Legacy API - use userApi and adminApi for new implementations
 export const salaryApi = {
   async register(data: FormData): Promise<SalaryResponse> {
-    return apiClient.post<SalaryResponse>('/users', data);
+    return userApi.register(data);
   },
 
   async update(id: number, data: Partial<SalaryData>): Promise<SalaryResponse> {
-    return apiClient.put<SalaryResponse>(`/users/${id}`, data);
+    return adminApi.updateUser(id, data);
   },
 
   async getAll(page: number = 1, search?: string): Promise<SalaryListResponse> {
-    const params = new URLSearchParams();
-    params.append('page', page.toString());
-    if (search) {
-      params.append('search', search);
-    }
-    
-    return apiClient.get<SalaryListResponse>(`/users?${params.toString()}`);
+    return adminApi.getUsers({ page, search });
   },
 
   async getById(id: number): Promise<SalaryResponse> {
-    return apiClient.get<SalaryResponse>(`/users/${id}`);
+    return userApi.getById(id);
   },
 
   async bulkUpdate(data: Partial<SalaryData>[]): Promise<SalaryResponse> {
-    return apiClient.post<SalaryResponse>('/users/bulk-update', { users: data });
+    return adminApi.bulkUpdateUsers(data);
   },
 
   async updateCommission(amount: number): Promise<SalaryResponse> {
-    return apiClient.put<SalaryResponse>('/commission', { amount });
+    return adminApi.updateCommission(amount);
   }
 };

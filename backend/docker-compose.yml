@@ -5,14 +5,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: development
     container_name: salary-app
     restart: unless-stopped
     working_dir: /var/www/
     volumes:
       - ./:/var/www
       - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
     networks:
       - salary-network
+    depends_on:
+      - db
+      - redis
 
   webserver:
     image: nginx:alpine
@@ -25,6 +32,8 @@ services:
       - ./docker/nginx/conf.d/:/etc/nginx/conf.d/
     networks:
       - salary-network
+    depends_on:
+      - app
 
   db:
     image: mysql:8.0
@@ -44,6 +53,24 @@ services:
       - dbdata:/var/lib/mysql
     networks:
       - salary-network
+    command: --default-authentication-plugin=mysql_native_password
+      --innodb-buffer-pool-size=256M
+      --innodb-log-file-size=64M
+      --max-connections=200
+      --query-cache-size=32M
+      --query-cache-type=1
+
+  redis:
+    image: redis:7-alpine
+    container_name: salary-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    networks:
+      - salary-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
@@ -65,4 +92,6 @@ networks:
 
 volumes:
   dbdata:
+    driver: local
+  redisdata:
     driver: local

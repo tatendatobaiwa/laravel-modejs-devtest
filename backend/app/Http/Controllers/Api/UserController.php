@@ -3,227 +3,434 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreUserRequest;
+use App\Http\Requests\FileUploadRequest;
 use App\Models\User;
 use App\Models\Salary;
-use App\Models\SalaryHistory;
-use App\Models\Commission;
+use App\Services\SalaryService;
+use App\Services\FileUploadService;
+use App\Services\AuditService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class UserController extends Controller
 {
-    public function store(Request $request)
+    protected SalaryService $salaryService;
+    protected FileUploadService $fileUploadService;
+    protected AuditService $auditService;
+
+    public function __construct(
+        SalaryService $salaryService,
+        FileUploadService $fileUploadService,
+        AuditService $auditService
+    ) {
+        $this->salaryService = $salaryService;
+        $this->fileUploadService = $fileUploadService;
+        $this->auditService = $auditService;
+    }
+
+    /**
+     * Store a new user or update existing user with unique email handling.
+     * 
+     * @param StoreUserRequest $request
+     * @return JsonResponse
+     */
+    public function store(StoreUserRequest $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255',
-            'salary_document' => 'required|file|mimes:pdf,doc,docx,xls,xlsx|max:10240',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
         try {
             DB::beginTransaction();
 
-            // Check if user exists by email
-            $user = User::where('email', $request->email)->first();
-
-            if ($user) {
+            $data = $request->getSanitizedData();
+            $isUpdate = $request->isUpdate();
+            
+            if ($isUpdate) {
                 // Update existing user
-                $user->update([
-                    'name' => $request->name,
+                $user = User::find($request->getExistingUserId());
+                $user->update(['name' => $data['name']]);
+                
+                Log::info('User updated via form submission', [
+                    'user_id' => $user->id,
+                    'email' => $user->email,
+                    'updated_fields' => ['name']
                 ]);
             } else {
                 // Create new user
                 $user = User::create([
-                    'name' => $request->name,
-                    'email' => $request->email,
-                    'password' => bcrypt('temporary_password'), // You might want to generate a random password
+                    'name' => $data['name'],
+                    'email' => $data['email'],
+                    'password' => bcrypt(str()->random(32)), // Generate secure random password
                 ]);
-            }
-
-            // Handle file upload
-            $file = $request->file('salary_document');
-            $fileName = time() . '_' . $user->id . '.' . $file->getClientOriginalExtension();
-            $filePath = $file->storeAs('salary_documents', $fileName, 'public');
-
-            // Get default commission
-            $commission = Commission::getDefaultCommission();
-
-            // Create or update salary record
-            $salary = Salary::updateOrCreate(
-                ['user_id' => $user->id],
-                [
-                    'salary_local_currency' => '€0.00', // This would be extracted from the document
-                    'salary_euros' => 0.00, // This would be extracted from the document
-                    'commission' => $commission->amount,
-                    'document_path' => $filePath,
-                    'notes' => 'Salary document uploaded',
-                ]
-            );
-
-            // Log salary history if this is an update
-            if ($salary->wasRecentlyCreated === false) {
-                SalaryHistory::create([
+                
+                Log::info('New user created via form submission', [
                     'user_id' => $user->id,
-                    'old_salary_local_currency' => $salary->getOriginal('salary_local_currency'),
-                    'new_salary_local_currency' => $salary->salary_local_currency,
-                    'old_salary_euros' => $salary->getOriginal('salary_euros'),
-                    'new_salary_euros' => $salary->salary_euros,
-                    'old_commission' => $salary->getOriginal('commission'),
-                    'new_commission' => $salary->commission,
-                    'changed_by' => $user->id, // Self-update for now
-                    'change_reason' => 'Document re-upload',
+                    'email' => $user->email
                 ]);
             }
+
+            // Handle file upload if provided
+            $documentPath = null;
+            if ($request->hasFile('document')) {
+                $documentPath = $this->fileUploadService->uploadFile(
+                    $request->file('document'),
+                    $user->id,
+                    'salary_document'
+                );
+            }
+
+            // Create or update salary record using service
+            $salary = $this->salaryService->createOrUpdateSalary($user->id, [
+                'salary_local_currency' => $data['salary_local_currency'],
+                'local_currency_code' => $data['local_currency_code'],
+                'commission' => $data['commission'],
+                'notes' => $data['notes'] ?? null,
+                'document_path' => $documentPath,
+            ], $isUpdate ? 'User form update' : 'Initial user registration');
+
+            // Log audit trail
+            $this->auditService->logUserAction($user->id, $isUpdate ? 'user_updated' : 'user_created', [
+                'salary_data' => $salary->toArray(),
+                'document_uploaded' => !is_null($documentPath),
+                'is_update' => $isUpdate,
+            ]);
 
             DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => $user->wasRecentlyCreated ? 'User created successfully' : 'User updated successfully',
+                'message' => $isUpdate ? 'User information updated successfully' : 'User registered successfully',
                 'data' => [
-                    'user' => $user->load('salary'),
-                    'salary' => $salary,
+                    'user' => $user->load(['salary', 'uploadedDocuments']),
+                    'is_update' => $isUpdate,
                 ]
-            ], $user->wasRecentlyCreated ? 201 : 200);
+            ], $isUpdate ? 200 : 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
             
+            Log::error('Error in user store operation', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->except(['document'])
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => 'An error occurred while processing the request',
-                'error' => $e->getMessage()
+                'message' => 'An error occurred while processing your request. Please try again.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
             ], 500);
         }
     }
 
-    public function index(Request $request)
+    /**
+     * Display a paginated listing of users with search and filtering.
+     * 
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function index(Request $request): JsonResponse
     {
-        $query = User::with('salary');
+        try {
+            $query = User::with(['salary', 'uploadedDocuments' => function($q) {
+                $q->latest()->limit(1); // Only get the most recent document
+            }]);
 
-        // Search functionality
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%");
+            // Search functionality - case insensitive
+            if ($request->filled('search')) {
+                $search = trim($request->search);
+                $query->where(function($q) use ($search) {
+                    $q->whereRaw('LOWER(name) LIKE ?', ['%' . strtolower($search) . '%'])
+                      ->orWhereRaw('LOWER(email) LIKE ?', ['%' . strtolower($search) . '%']);
+                });
+            }
+
+            // Filter by salary range
+            if ($request->filled('min_salary')) {
+                $query->whereHas('salary', function($q) use ($request) {
+                    $q->where('salary_euros', '>=', $request->min_salary);
+                });
+            }
+
+            if ($request->filled('max_salary')) {
+                $query->whereHas('salary', function($q) use ($request) {
+                    $q->where('salary_euros', '<=', $request->max_salary);
+                });
+            }
+
+            // Filter by commission range
+            if ($request->filled('min_commission')) {
+                $query->whereHas('salary', function($q) use ($request) {
+                    $q->where('commission', '>=', $request->min_commission);
+                });
+            }
+
+            if ($request->filled('max_commission')) {
+                $query->whereHas('salary', function($q) use ($request) {
+                    $q->where('commission', '<=', $request->max_commission);
+                });
+            }
+
+            // Filter by currency
+            if ($request->filled('currency')) {
+                $query->whereHas('salary', function($q) use ($request) {
+                    $q->where('local_currency_code', $request->currency);
+                });
+            }
+
+            // Filter by date range
+            if ($request->filled('created_from')) {
+                $query->where('created_at', '>=', $request->created_from);
+            }
+
+            if ($request->filled('created_to')) {
+                $query->where('created_at', '<=', $request->created_to . ' 23:59:59');
+            }
+
+            // Sorting
+            $sortBy = $request->get('sort_by', 'created_at');
+            $sortDirection = $request->get('sort_direction', 'desc');
+            
+            // Validate sort parameters
+            $allowedSortFields = ['name', 'email', 'created_at', 'updated_at'];
+            $allowedDirections = ['asc', 'desc'];
+            
+            if (!in_array($sortBy, $allowedSortFields)) {
+                $sortBy = 'created_at';
+            }
+            
+            if (!in_array($sortDirection, $allowedDirections)) {
+                $sortDirection = 'desc';
+            }
+
+            // Special handling for salary-related sorting
+            if (in_array($sortBy, ['salary_euros', 'commission', 'displayed_salary'])) {
+                $query->leftJoin('salaries', 'users.id', '=', 'salaries.user_id')
+                      ->orderBy("salaries.{$sortBy}", $sortDirection)
+                      ->select('users.*');
+            } else {
+                $query->orderBy($sortBy, $sortDirection);
+            }
+
+            // Pagination
+            $perPage = min($request->get('per_page', 20), 100); // Max 100 per page
+            $users = $query->paginate($perPage);
+
+            // Transform the data to include calculated fields
+            $transformedUsers = $users->getCollection()->map(function ($user) {
+                $userData = $user->toArray();
+                
+                if ($user->salary) {
+                    $userData['salary']['displayed_salary'] = $user->salary->salary_euros + $user->salary->commission;
+                }
+                
+                return $userData;
             });
-        }
 
-        // Pagination
-        $perPage = $request->get('per_page', 10);
-        $users = $query->paginate($perPage);
+            return response()->json([
+                'success' => true,
+                'data' => $transformedUsers,
+                'pagination' => [
+                    'current_page' => $users->currentPage(),
+                    'last_page' => $users->lastPage(),
+                    'per_page' => $users->perPage(),
+                    'total' => $users->total(),
+                    'from' => $users->firstItem(),
+                    'to' => $users->lastItem(),
+                ],
+                'filters' => [
+                    'search' => $request->search,
+                    'min_salary' => $request->min_salary,
+                    'max_salary' => $request->max_salary,
+                    'min_commission' => $request->min_commission,
+                    'max_commission' => $request->max_commission,
+                    'currency' => $request->currency,
+                    'created_from' => $request->created_from,
+                    'created_to' => $request->created_to,
+                    'sort_by' => $sortBy,
+                    'sort_direction' => $sortDirection,
+                ]
+            ]);
 
-        return response()->json([
-            'success' => true,
-            'data' => $users->items(),
-            'pagination' => [
-                'current_page' => $users->currentPage(),
-                'last_page' => $users->lastPage(),
-                'per_page' => $users->perPage(),
-                'total' => $users->total(),
-            ]
-        ]);
-    }
-
-    public function show(User $user)
-    {
-        $user->load(['salary', 'salaryHistory']);
-        
-        return response()->json([
-            'success' => true,
-            'data' => $user
-        ]);
-    }
-
-    public function update(Request $request, User $user)
-    {
-        $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|string|max:255',
-            'salary_local_currency' => 'sometimes|string|max:255',
-            'salary_euros' => 'sometimes|numeric|min:0',
-            'commission' => 'sometimes|numeric|min:0',
-        ]);
-
-        if ($validator->fails()) {
+        } catch (\Exception $e) {
+            Log::error('Error in user index operation', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_params' => $request->all()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
+                'message' => 'An error occurred while retrieving users.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
         }
+    }
+
+    /**
+     * Display the specified user with full details.
+     * 
+     * @param User $user
+     * @return JsonResponse
+     */
+    public function show(User $user): JsonResponse
+    {
+        try {
+            $user->load([
+                'salary',
+                'salaryHistory' => function($q) {
+                    $q->orderBy('created_at', 'desc')->limit(10); // Last 10 changes
+                },
+                'uploadedDocuments' => function($q) {
+                    $q->orderBy('created_at', 'desc');
+                }
+            ]);
+
+            // Calculate additional fields
+            $userData = $user->toArray();
+            
+            if ($user->salary) {
+                $userData['salary']['displayed_salary'] = $user->salary->salary_euros + $user->salary->commission;
+            }
+
+            // Add statistics
+            $userData['statistics'] = [
+                'total_salary_changes' => $user->salaryHistory()->count(),
+                'documents_uploaded' => $user->uploadedDocuments()->count(),
+                'account_age_days' => $user->created_at->diffInDays(now()),
+                'last_updated' => $user->updated_at,
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $userData
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error in user show operation', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while retrieving user details.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
+     * Update the specified user (name only - salary updates handled by SalaryController).
+     * 
+     * @param Request $request
+     * @param User $user
+     * @return JsonResponse
+     */
+    public function update(Request $request, User $user): JsonResponse
+    {
+        $request->validate([
+            'name' => 'required|string|min:2|max:255|regex:/^[a-zA-Z\s\-\'\.]+$/',
+        ], [
+            'name.required' => 'The name field is required.',
+            'name.min' => 'The name must be at least 2 characters long.',
+            'name.max' => 'The name may not be greater than 255 characters.',
+            'name.regex' => 'The name may only contain letters, spaces, hyphens, apostrophes, and dots.',
+        ]);
 
         try {
             DB::beginTransaction();
 
-            // Update user if name is provided
-            if ($request->has('name')) {
-                $user->update(['name' => $request->name]);
-            }
+            $oldName = $user->name;
+            $user->update([
+                'name' => trim($request->name)
+            ]);
 
-            // Update salary if provided
-            if ($user->salary && ($request->has('salary_local_currency') || $request->has('salary_euros') || $request->has('commission'))) {
-                $oldSalary = $user->salary->toArray();
-                
-                $user->salary->update($request->only(['salary_local_currency', 'salary_euros', 'commission']));
-
-                // Log salary history
-                SalaryHistory::create([
-                    'user_id' => $user->id,
-                    'old_salary_local_currency' => $oldSalary['salary_local_currency'],
-                    'new_salary_local_currency' => $user->salary->salary_local_currency,
-                    'old_salary_euros' => $oldSalary['salary_euros'],
-                    'new_salary_euros' => $user->salary->salary_euros,
-                    'old_commission' => $oldSalary['commission'],
-                    'new_commission' => $user->salary->commission,
-                    'changed_by' => $user->id, // Admin ID would be used here
-                    'change_reason' => 'Admin update',
-                ]);
-            }
+            // Log audit trail
+            $this->auditService->logUserAction($user->id, 'user_name_updated', [
+                'old_name' => $oldName,
+                'new_name' => $user->name,
+                'updated_by' => auth()->id() ?? 'system',
+            ]);
 
             DB::commit();
 
-            $user->load('salary', 'salaryHistory');
+            $user->load(['salary', 'uploadedDocuments']);
+
+            Log::info('User name updated', [
+                'user_id' => $user->id,
+                'old_name' => $oldName,
+                'new_name' => $user->name,
+                'updated_by' => auth()->id() ?? 'system'
+            ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'User updated successfully',
+                'message' => 'User name updated successfully',
                 'data' => $user
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
             
+            Log::error('Error in user update operation', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => 'An error occurred while updating the user',
-                'error' => $e->getMessage()
+                'message' => 'An error occurred while updating the user.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
             ], 500);
         }
     }
 
-    public function destroy(User $user)
+    /**
+     * Remove the specified user from storage (soft delete).
+     * 
+     * @param User $user
+     * @return JsonResponse
+     */
+    public function destroy(User $user): JsonResponse
     {
         try {
-            // Delete associated files
-            if ($user->salary && $user->salary->document_path) {
-                Storage::disk('public')->delete($user->salary->document_path);
+            DB::beginTransaction();
+
+            // Store user data for audit log before deletion
+            $userData = [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'salary_data' => $user->salary?->toArray(),
+                'documents_count' => $user->uploadedDocuments()->count(),
+            ];
+
+            // Clean up uploaded files using service
+            foreach ($user->uploadedDocuments as $document) {
+                $this->fileUploadService->deleteFile($document->file_path);
             }
 
-            // Delete user and associated records
-            $user->salaryHistory()->delete();
-            $user->salary()->delete();
+            // Log audit trail before deletion
+            $this->auditService->logUserAction($user->id, 'user_deleted', [
+                'user_data' => $userData,
+                'deleted_by' => auth()->id() ?? 'system',
+                'deletion_reason' => 'Admin deletion',
+            ]);
+
+            // Soft delete user (this will cascade to related models if configured)
             $user->delete();
+
+            DB::commit();
+
+            Log::info('User deleted', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'deleted_by' => auth()->id() ?? 'system'
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -231,82 +438,122 @@ class UserController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error('Error in user delete operation', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => 'An error occurred while deleting the user',
-                'error' => $e->getMessage()
+                'message' => 'An error occurred while deleting the user.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
             ], 500);
         }
     }
 
-    public function bulkUpdate(Request $request)
+    /**
+     * Upload a document for a specific user.
+     * 
+     * @param FileUploadRequest $request
+     * @param User $user
+     * @return JsonResponse
+     */
+    public function uploadDocument(FileUploadRequest $request, User $user): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'users' => 'required|array',
-            'users.*.id' => 'required|exists:users,id',
-            'users.*.salary_local_currency' => 'sometimes|string',
-            'users.*.salary_euros' => 'sometimes|numeric|min:0',
-            'users.*.commission' => 'sometimes|numeric|min:0',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
         try {
             DB::beginTransaction();
 
-            $updatedUsers = [];
+            $filePath = $this->fileUploadService->uploadFile(
+                $request->file('file'),
+                $user->id,
+                $request->input('file_type', 'other'),
+                $request->input('description')
+            );
 
-            foreach ($request->users as $userData) {
-                $user = User::find($userData['id']);
-                
-                if ($user && $user->salary) {
-                    $oldSalary = $user->salary->toArray();
-                    
-                    $user->salary->update(array_filter($userData, function($key) {
-                        return in_array($key, ['salary_local_currency', 'salary_euros', 'commission']);
-                    }, ARRAY_FILTER_USE_KEY));
-
-                    // Log salary history
-                    SalaryHistory::create([
-                        'user_id' => $user->id,
-                        'old_salary_local_currency' => $oldSalary['salary_local_currency'],
-                        'new_salary_local_currency' => $user->salary->salary_local_currency,
-                        'old_salary_euros' => $oldSalary['salary_euros'],
-                        'new_salary_euros' => $user->salary->salary_euros,
-                        'old_commission' => $oldSalary['commission'],
-                        'new_commission' => $user->salary->commission,
-                        'changed_by' => $user->id, // Admin ID would be used here
-                        'change_reason' => 'Bulk update',
-                    ]);
-
-                    $updatedUsers[] = $user->load('salary');
-                }
-            }
+            // Log audit trail
+            $this->auditService->logUserAction($user->id, 'document_uploaded', [
+                'file_type' => $request->input('file_type'),
+                'file_path' => $filePath,
+                'description' => $request->input('description'),
+                'uploaded_by' => auth()->id() ?? 'system',
+            ]);
 
             DB::commit();
 
+            $user->load('uploadedDocuments');
+
             return response()->json([
                 'success' => true,
-                'message' => 'Bulk update completed successfully',
+                'message' => 'Document uploaded successfully',
                 'data' => [
-                    'updated_users' => $updatedUsers,
-                    'total_updated' => count($updatedUsers)
+                    'file_path' => $filePath,
+                    'user' => $user
                 ]
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
             
+            Log::error('Error in document upload operation', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => 'An error occurred during bulk update',
-                'error' => $e->getMessage()
+                'message' => 'An error occurred while uploading the document.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get user statistics and summary data.
+     * 
+     * @return JsonResponse
+     */
+    public function statistics(): JsonResponse
+    {
+        try {
+            $stats = [
+                'total_users' => User::count(),
+                'users_with_salary' => User::whereHas('salary')->count(),
+                'users_without_salary' => User::whereDoesntHave('salary')->count(),
+                'total_documents' => \App\Models\UploadedDocument::count(),
+                'average_salary_euros' => Salary::avg('salary_euros'),
+                'average_commission' => Salary::avg('commission'),
+                'currency_distribution' => Salary::select('local_currency_code')
+                    ->selectRaw('COUNT(*) as count')
+                    ->groupBy('local_currency_code')
+                    ->get(),
+                'recent_registrations' => User::where('created_at', '>=', now()->subDays(30))->count(),
+                'salary_ranges' => [
+                    'under_30k' => Salary::where('salary_euros', '<', 30000)->count(),
+                    '30k_to_50k' => Salary::whereBetween('salary_euros', [30000, 50000])->count(),
+                    '50k_to_75k' => Salary::whereBetween('salary_euros', [50000, 75000])->count(),
+                    'over_75k' => Salary::where('salary_euros', '>', 75000)->count(),
+                ],
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $stats
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error in user statistics operation', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while retrieving statistics.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
             ], 500);
         }
     }

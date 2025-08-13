@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: salary-app-prod
+    restart: unless-stopped
+    working_dir: /var/www/
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+    networks:
+      - salary-network
+    depends_on:
+      - db
+      - redis
+
+  webserver:
+    image: nginx:alpine
+    container_name: salary-nginx-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/prod.conf:/etc/nginx/conf.d/default.conf
+      - ./storage/app/public:/var/www/storage/app/public:ro
+    networks:
+      - salary-network
+    depends_on:
+      - app
+
+  db:
+    image: mysql:8.0
+    container_name: salary-db-prod
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_USER: ${DB_USERNAME}
+    volumes:
+      - dbdata:/var/lib/mysql
+    networks:
+      - salary-network
+    command: --default-authentication-plugin=mysql_native_password
+      --innodb-buffer-pool-size=512M
+      --innodb-log-file-size=128M
+      --max-connections=500
+      --query-cache-size=64M
+      --query-cache-type=1
+      --slow-query-log=1
+      --slow-query-log-file=/var/log/mysql/slow.log
+      --long-query-time=2
+
+  redis:
+    image: redis:7-alpine
+    container_name: salary-redis-prod
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    networks:
+      - salary-network
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+networks:
+  salary-network:
+    driver: bridge
+
+volumes:
+  dbdata:
+    driver: local
+  redisdata:
+    driver: local
