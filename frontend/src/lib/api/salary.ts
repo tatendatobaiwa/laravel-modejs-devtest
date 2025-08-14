@@ -37,26 +37,26 @@ export interface SalaryListResponse {
 // Legacy API - use userApi and adminApi for new implementations
 export const salaryApi = {
   async register(data: FormData): Promise<SalaryResponse> {
-    return userApi.register(data);
+    return userApi.register(data as any) as unknown as Promise<SalaryResponse>;
   },
 
   async update(id: number, data: Partial<SalaryData>): Promise<SalaryResponse> {
-    return adminApi.updateUser(id, data);
+    return adminApi.updateUser(id, data as any) as unknown as Promise<SalaryResponse>;
   },
 
   async getAll(page: number = 1, search?: string): Promise<SalaryListResponse> {
-    return adminApi.getUsers({ page, search });
+    return adminApi.getUsers({ page, search }) as unknown as Promise<SalaryListResponse>;
   },
 
   async getById(id: number): Promise<SalaryResponse> {
-    return userApi.getById(id);
+    return userApi.getById(id) as unknown as Promise<SalaryResponse>;
   },
 
   async bulkUpdate(data: Partial<SalaryData>[]): Promise<SalaryResponse> {
-    return adminApi.bulkUpdateUsers(data);
+    return adminApi.bulkUpdateUsers(data as any) as unknown as Promise<SalaryResponse>;
   },
 
   async updateCommission(amount: number): Promise<SalaryResponse> {
-    return adminApi.updateCommission(amount);
+    return adminApi.updateCommission(amount) as unknown as Promise<SalaryResponse>;
   }
 };

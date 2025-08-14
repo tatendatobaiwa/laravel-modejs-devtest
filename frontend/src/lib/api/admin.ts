@@ -35,14 +35,14 @@ export const adminApi = {
       });
     }
 
-    return apiClient.get<PaginatedResponse<UserWithSalary>>('/admin/users', searchParams);
+    return apiClient.get<PaginatedResponse<UserWithSalary>>('/v1/admin/users', searchParams);
   },
 
   /**
    * Get user by ID (admin view with full details)
    */
   async getUser(id: number): Promise<ApiResponse<UserWithSalary>> {
-    return apiClient.get<ApiResponse<UserWithSalary>>(`/admin/users/${id}`);
+    return apiClient.get<ApiResponse<UserWithSalary>>(`/v1/admin/users/${id}`);
   },
 
   /**
@@ -53,7 +53,7 @@ export const adminApi = {
     userData: Partial<UserWithSalary>,
     realTimeUpdate: boolean = false
   ): Promise<ApiResponse<UserWithSalary>> {
-    const endpoint = `/admin/users/${id}`;
+    const endpoint = `/v1/admin/users/${id}`;
     
     if (realTimeUpdate) {
       // For real-time updates, we might want to use WebSockets or Server-Sent Events
@@ -72,7 +72,7 @@ export const adminApi = {
     salaryData: UpdateSalaryRequest,
     realTimeUpdate: boolean = false
   ): Promise<ApiResponse<UserWithSalary>> {
-    const endpoint = `/admin/users/${userId}/salary`;
+    const endpoint = `/v1/admin/users/${userId}/salary`;
     
     if (realTimeUpdate) {
       console.log('Real-time salary update requested for user:', userId);
@@ -95,7 +95,7 @@ export const adminApi = {
 
     try {
       const result = await apiClient.post<ApiResponse<{ updated: number; failed: number; errors: any[] }>>(
-        '/admin/users/bulk-update',
+        '/v1/admin/users/bulk-update',
         { users: updates }
       );
 
@@ -130,7 +130,7 @@ export const adminApi = {
 
     try {
       const result = await apiClient.post<ApiResponse<{ updated: number; failed: number; errors: any[] }>>(
-        '/admin/salaries/bulk-update',
+        '/v1/admin/salaries/bulk-update',
         { salaries: updates }
       );
 
@@ -151,8 +151,8 @@ export const adminApi = {
    * Get dashboard statistics with caching
    */
   async getDashboardStats(useCache: boolean = true): Promise<ApiResponse<DashboardStats>> {
-    const params = useCache ? { cache: 'true' } : {};
-    return apiClient.get<ApiResponse<DashboardStats>>('/admin/dashboard/stats', params);
+    const params = useCache ? { cache: 'true' } : undefined;
+    return apiClient.get<ApiResponse<DashboardStats>>('/v1/admin/dashboard', params);
   },
 
   /**
@@ -170,7 +170,7 @@ export const adminApi = {
       params.cache = 'true';
     }
 
-    return apiClient.get<ApiResponse<any[]>>('/admin/dashboard/activities', params);
+    return apiClient.get<ApiResponse<any[]>>('/v1/admin/statistics', params);
   },
 
   /**
@@ -186,7 +186,7 @@ export const adminApi = {
       params.cache = 'true';
     }
 
-    return apiClient.get<ApiResponse<any>>('/admin/dashboard/salary-stats', params);
+    return apiClient.get<ApiResponse<any>>('/v1/admin/statistics', params);
   },
 
   /**
@@ -198,7 +198,7 @@ export const adminApi = {
       data.effective_date = effectiveDate;
     }
 
-    return apiClient.put<ApiResponse<Commission>>('/admin/commission', data);
+    return apiClient.put<ApiResponse<Commission>>('/v1/admin/commissions', data);
   },
 
   /**
@@ -208,7 +208,7 @@ export const adminApi = {
     page: number = 1,
     perPage: number = 20
   ): Promise<PaginatedResponse<Commission>> {
-    return apiClient.get<PaginatedResponse<Commission>>('/admin/commission/history', {
+    return apiClient.get<PaginatedResponse<Commission>>('/v1/admin/commissions/history', {
       page: page.toString(),
       per_page: perPage.toString(),
     });
@@ -222,7 +222,7 @@ export const adminApi = {
     page: number = 1,
     perPage: number = 20
   ): Promise<PaginatedResponse<SalaryHistory>> {
-    return apiClient.get<PaginatedResponse<SalaryHistory>>(`/admin/users/${userId}/salary-history`, {
+    return apiClient.get<PaginatedResponse<SalaryHistory>>(`/v1/admin/users/${userId}/history`, {
       page: page.toString(),
       per_page: perPage.toString(),
     });
@@ -246,7 +246,7 @@ export const adminApi = {
       }
     }
 
-    return apiClient.get<ApiResponse<{ download_url: string }>>('/admin/users/export', params);
+    return apiClient.get<ApiResponse<{ download_url: string }>>('/v1/admin/users/export', params);
   },
 
   /**
@@ -258,7 +258,7 @@ export const adminApi = {
   ): Promise<ApiResponse<{ imported: number; failed: number; errors: any[] }>> {
     if (onProgress) {
       return apiClient.uploadFile<ApiResponse<{ imported: number; failed: number; errors: any[] }>>(
-        '/admin/users/import',
+        '/v1/admin/users/import',
         file,
         {},
         onProgress
@@ -269,7 +269,7 @@ export const adminApi = {
     formData.append('file', file);
     
     return apiClient.post<ApiResponse<{ imported: number; failed: number; errors: any[] }>>(
-      '/admin/users/import',
+      '/v1/admin/users/import',
       formData
     );
   },
@@ -279,14 +279,14 @@ export const adminApi = {
    */
   async deleteUser(userId: number, reason?: string): Promise<ApiResponse<void>> {
     const data = reason ? { reason } : {};
-    return apiClient.delete<ApiResponse<void>>(`/admin/users/${userId}`, data);
+    return apiClient.delete<ApiResponse<void>>(`/v1/admin/users/${userId}`);
   },
 
   /**
    * Restore deleted user
    */
   async restoreUser(userId: number): Promise<ApiResponse<UserWithSalary>> {
-    return apiClient.post<ApiResponse<UserWithSalary>>(`/admin/users/${userId}/restore`);
+    return apiClient.post<ApiResponse<UserWithSalary>>(`/v1/admin/users/${userId}/restore`);
   },
 
   /**
@@ -297,7 +297,7 @@ export const adminApi = {
     page: number = 1,
     perPage: number = 50
   ): Promise<PaginatedResponse<any>> {
-    return apiClient.get<PaginatedResponse<any>>('/admin/logs', {
+    return apiClient.get<PaginatedResponse<any>>('/v1/admin/logs', {
       level,
       page: page.toString(),
       per_page: perPage.toString(),
@@ -321,21 +321,21 @@ export const adminApi = {
     if (userId) params.user_id = userId.toString();
     if (action) params.action = action;
 
-    return apiClient.get<PaginatedResponse<any>>('/admin/audit-trail', params);
+    return apiClient.get<PaginatedResponse<any>>('/v1/admin/audit-trail', params);
   },
 
   /**
    * Update system settings
    */
   async updateSettings(settings: Record<string, any>): Promise<ApiResponse<Record<string, any>>> {
-    return apiClient.put<ApiResponse<Record<string, any>>>('/admin/settings', settings);
+    return apiClient.put<ApiResponse<Record<string, any>>>('/v1/admin/settings', settings);
   },
 
   /**
    * Get system settings
    */
   async getSettings(): Promise<ApiResponse<Record<string, any>>> {
-    return apiClient.get<ApiResponse<Record<string, any>>>('/admin/settings');
+    return apiClient.get<ApiResponse<Record<string, any>>>('/v1/admin/settings');
   },
 };
 

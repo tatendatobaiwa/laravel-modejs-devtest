@@ -86,7 +86,7 @@ export function useUrlState<T extends Record<string, any>>(
     updateState(prev => {
       const newState = { ...prev };
       if (key in defaultValues) {
-        newState[key] = defaultValues[key];
+        newState[key] = defaultValues[key as keyof typeof defaultValues];
       } else {
         delete newState[key];
       }

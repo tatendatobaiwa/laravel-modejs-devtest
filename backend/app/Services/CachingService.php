@@ -328,12 +328,115 @@ class CachingService
             $this->put(self::PREFIX_STATS . 'currency_distribution', $distribution, self::LONG_CACHE, [self::TAG_STATISTICS]);
             $results[] = 'Currency distribution warmed up';
             
+            // Warm up user statistics
+            $userStats = $dbService->getUserStatistics();
+            $this->put(self::PREFIX_STATS . 'user_overview', $userStats, self::LONG_CACHE, [self::TAG_STATISTICS, self::TAG_USERS]);
+            $results[] = 'User statistics warmed up';
+            
+            // Warm up salary trends
+            $trends = $dbService->getSalaryTrends(12);
+            $this->put(self::PREFIX_STATS . 'salary_trends_12m', $trends, self::LONG_CACHE, [self::TAG_STATISTICS, self::TAG_SALARIES]);
+            $results[] = 'Salary trends warmed up';
+            
+            // Warm up top earners
+            $topEarners = \App\Models\Salary::with('user:id,name,email')
+                ->orderBy('displayed_salary', 'desc')
+                ->limit(10)
+                ->get();
+            $this->put(self::PREFIX_STATS . 'top_earners', $topEarners, self::MEDIUM_CACHE, [self::TAG_SALARIES, self::TAG_USERS]);
+            $results[] = 'Top earners warmed up';
+            
         } catch (\Exception $e) {
             $results[] = 'Error warming up caches: ' . $e->getMessage();
             Log::error('Cache warm-up failed', ['error' => $e->getMessage()]);
         }
         
         return $results;
+    }
+
+    /**
+     * Cache query results with automatic invalidation.
+     */
+    public function cacheQuery(string $key, callable $callback, int $minutes = null, array $tags = [])
+    {
+        $minutes = $minutes ?? self::MEDIUM_CACHE;
+        return $this->remember($key, $minutes, $callback, $tags);
+    }
+
+    /**
+     * Cache paginated results with metadata.
+     */
+    public function cachePaginatedResults(string $key, callable $callback, int $minutes = null): array
+    {
+        $minutes = $minutes ?? self::SHORT_CACHE;
+        
+        return $this->remember($key, $minutes, function() use ($callback) {
+            $results = $callback();
+            
+            if (method_exists($results, 'toArray')) {
+                return [
+                    'data' => $results->items(),
+                    'pagination' => [
+                        'current_page' => $results->currentPage(),
+                        'last_page' => $results->lastPage(),
+                        'per_page' => $results->perPage(),
+                        'total' => $results->total(),
+                        'from' => $results->firstItem(),
+                        'to' => $results->lastItem(),
+                    ],
+                    'cached_at' => now()->toISOString(),
+                ];
+            }
+            
+            return $results;
+        }, [self::TAG_API]);
+    }
+
+    /**
+     * Intelligent cache warming based on usage patterns.
+     */
+    public function intelligentWarmUp(): array
+    {
+        $results = [];
+        
+        try {
+            // Get most accessed cache keys from logs or metrics
+            $popularKeys = $this->getPopularCacheKeys();
+            
+            foreach ($popularKeys as $key => $callback) {
+                try {
+                    $this->remember($key, self::MEDIUM_CACHE, $callback);
+                    $results[] = "Warmed up popular key: {$key}";
+                } catch (\Exception $e) {
+                    $results[] = "Failed to warm up {$key}: " . $e->getMessage();
+                }
+            }
+            
+        } catch (\Exception $e) {
+            $results[] = 'Error in intelligent warm-up: ' . $e->getMessage();
+        }
+        
+        return $results;
+    }
+
+    /**
+     * Get popular cache keys based on usage patterns.
+     */
+    private function getPopularCacheKeys(): array
+    {
+        // This would typically come from analytics or metrics
+        // For now, return commonly used queries
+        return [
+            'admin_dashboard_30d' => function() {
+                return app(\App\Http\Controllers\Api\AdminController::class)->dashboard(request());
+            },
+            'salary_statistics_overview' => function() {
+                return app(\App\Services\DatabaseOptimizationService::class)->getSalaryStatistics();
+            },
+            'users_with_salary_count' => function() {
+                return \App\Models\User::whereHas('salary')->count();
+            },
+        ];
     }
 
     /**

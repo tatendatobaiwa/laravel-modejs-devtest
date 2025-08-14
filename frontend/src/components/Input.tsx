@@ -29,7 +29,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(({
   };
   
   let borderColor = '';
-  const hasError = error && error !== false;
+  const hasError = Boolean(error);
   if (hasError) borderColor = 'border-red-500';
   else if (success) borderColor = 'border-green-500';
   

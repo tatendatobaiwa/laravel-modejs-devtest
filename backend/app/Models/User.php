@@ -103,13 +103,45 @@ class User extends Authenticatable
         return $query->select([
             'id', 'name', 'email', 'created_at', 'updated_at', 'deleted_at'
         ])->with([
-            'salary:id,user_id,salary_local_currency,local_currency_code,salary_euros,commission,displayed_salary,effective_date,updated_at',
+            'salary' => function($q) {
+                $q->select([
+                    'id', 'user_id', 'salary_local_currency', 'local_currency_code',
+                    'salary_euros', 'commission', 'displayed_salary', 'effective_date', 'updated_at'
+                ]);
+            },
             'uploadedDocuments' => function($q) {
-                $q->select('id', 'user_id', 'file_name', 'file_type', 'created_at')
+                $q->select('id', 'user_id', 'original_filename', 'document_type', 'created_at', 'is_verified')
                   ->latest()
                   ->limit(1);
             }
         ])->withCount(['salaryHistory', 'uploadedDocuments']);
+    }
+
+    /**
+     * Scope for high-performance queries with minimal data.
+     */
+    public function scopeMinimal($query)
+    {
+        return $query->select(['id', 'name', 'email']);
+    }
+
+    /**
+     * Scope for salary-related queries with optimized joins.
+     */
+    public function scopeWithSalaryOptimized($query)
+    {
+        return $query->select([
+            'users.id',
+            'users.name',
+            'users.email',
+            'users.created_at',
+            'salaries.salary_euros',
+            'salaries.commission',
+            'salaries.displayed_salary',
+            'salaries.local_currency_code'
+        ])
+        ->join('salaries', 'users.id', '=', 'salaries.user_id')
+        ->whereNull('users.deleted_at');
     }
 
     /**

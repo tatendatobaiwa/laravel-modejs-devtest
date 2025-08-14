@@ -23,7 +23,7 @@ export function useEmailValidation({
     error: null,
   });
 
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastEmailRef = useRef<string>('');
 
   const validateEmail = useCallback(async (email: string) => {

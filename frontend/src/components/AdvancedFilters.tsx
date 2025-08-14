@@ -366,7 +366,7 @@ export default function AdvancedFilters({
         {quickFilters.map(quickFilter => (
           <Button
             key={quickFilter.key}
-            variant={quickFilter.active ? 'default' : 'outline'}
+            variant={quickFilter.active ? 'primary' : 'outline'}
             size="sm"
             onClick={() => handleQuickFilter(quickFilter)}
             disabled={loading}

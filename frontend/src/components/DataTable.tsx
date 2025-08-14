@@ -414,7 +414,7 @@ export default function DataTable<T = Record<string, unknown>>({
               return (
                 <Button
                   key={pageNum}
-                  variant={pageNum === pagination.currentPage ? 'default' : 'outline'}
+                  variant={pageNum === pagination.currentPage ? 'primary' : 'outline'}
                   size="sm"
                   onClick={() => pagination.onPageChange(pageNum)}
                 >

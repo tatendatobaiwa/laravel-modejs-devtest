@@ -50,4 +50,23 @@ class CommissionController extends Controller
             ], 500);
         }
     }
+
+    public function history(Request $request)
+    {
+        $perPage = $request->get('per_page', 15);
+        
+        $commissions = Commission::orderBy('created_at', 'desc')
+                                ->paginate($perPage);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $commissions->items(),
+            'pagination' => [
+                'current_page' => $commissions->currentPage(),
+                'last_page' => $commissions->lastPage(),
+                'per_page' => $commissions->perPage(),
+                'total' => $commissions->total(),
+            ]
+        ]);
+    }
 }

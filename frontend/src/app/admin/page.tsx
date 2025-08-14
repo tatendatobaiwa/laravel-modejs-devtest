@@ -4,12 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import Button from '@/components/Button';
-import DataTable from '@/components/DataTable';
-import Modal from '@/components/Modal';
 import Input from '@/components/Input';
-import AdvancedFilters from '@/components/AdvancedFilters';
-import AdvancedSearch from '@/components/AdvancedSearch';
-import SearchPresets from '@/components/SearchPresets';
+import { LazyDataTable, LazyAdvancedFilters, LazyAdvancedSearch, LazySearchPresets, LazyModal } from '@/components/LazyComponents';
+import { SmartLoader, ProgressiveLoader } from '@/components/OptimizedLoading';
 import { useAdminData } from '@/hooks/useAdminData';
 import { useBulkOperations } from '@/hooks/useBulkOperations';
 import { useSearchAndFilterState } from '@/hooks/useUrlState';
@@ -271,7 +268,7 @@ export default function AdminPage() {
     updateUrlState({ per_page: perPage, page: 1 });
   }, [updateUrlState]);
 
-  const handleRowAction = useCallback((action: string, row: UserWithSalary | number[], index: number) => {
+  const handleRowAction = useCallback((action: string, row: unknown, index: number) => {
     switch (action) {
       case 'edit':
         setEditingUser(row as UserWithSalary);
@@ -384,18 +381,23 @@ export default function AdminPage() {
       </div>
 
       {/* Advanced Filters */}
-      <AdvancedFilters
-        filters={filters}
-        onFiltersChange={handleFilter}
-        filterOptions={filterOptions}
-        onReset={handleResetFilters}
-        loading={adminData.loading || searchWithHistory.isSearching}
-        showActiveCount={true}
-      />
+      <ProgressiveLoader
+        fallback={<SmartLoader type="Form" />}
+        delay={100}
+      >
+        <LazyAdvancedFilters
+          filters={filters}
+          onFiltersChange={handleFilter}
+          filterOptions={filterOptions}
+          onReset={handleResetFilters}
+          loading={adminData.loading || searchWithHistory.isSearching}
+          showActiveCount={true}
+        />
+      </ProgressiveLoader>
 
       {/* Search Presets */}
       <div className="px-4 py-2 border-b border-[#3b4754]">
-        <SearchPresets
+        <LazySearchPresets
           currentSearch={searchWithHistory.query}
           currentFilters={filters}
           onApplyPreset={handleApplyPreset}
@@ -405,7 +407,7 @@ export default function AdminPage() {
 
       {/* Advanced Search */}
       <div className="px-4 py-3">
-        <AdvancedSearch
+        <LazyAdvancedSearch
           value={searchWithHistory.query}
           onChange={handleSearch}
           placeholder="Search users by name, email, salary, or use filters like name:john, email:@company.com..."
@@ -430,26 +432,31 @@ export default function AdminPage() {
       </div>
 
       {/* Data Table */}
-      <DataTable
-        columns={columns}
-        data={adminData.users}
-        loading={adminData.loading || searchWithHistory.isSearching}
-        onRowAction={handleRowAction}
-        onCellEdit={handleCellEdit}
-        onSort={handleSort}
-        searchable={false} // We're using the advanced search above
-        selectable={true}
-        selectedRows={selectedRows}
-        onSelectionChange={setSelectedRows}
-        pagination={{
-          currentPage: adminData.pagination.currentPage,
-          totalPages: adminData.pagination.totalPages,
-          total: adminData.pagination.total,
-          perPage: adminData.pagination.perPage,
-          onPageChange: handlePageChange,
-          onPerPageChange: handlePerPageChange,
-        }}
-      />
+      <ProgressiveLoader
+        fallback={<SmartLoader type="Table" />}
+        delay={150}
+      >
+        <LazyDataTable
+          columns={columns}
+          data={adminData.users}
+          loading={adminData.loading || searchWithHistory.isSearching}
+          onRowAction={handleRowAction}
+          onCellEdit={handleCellEdit}
+          onSort={handleSort}
+          searchable={false} // We're using the advanced search above
+          selectable={true}
+          selectedRows={selectedRows}
+          onSelectionChange={setSelectedRows}
+          pagination={{
+            currentPage: adminData.pagination.currentPage,
+            totalPages: adminData.pagination.totalPages,
+            total: adminData.pagination.total,
+            perPage: adminData.pagination.perPage,
+            onPageChange: handlePageChange,
+            onPerPageChange: handlePerPageChange,
+          }}
+        />
+      </ProgressiveLoader>
 
       {/* Error Display */}
       {adminData.error && (
@@ -469,7 +476,7 @@ export default function AdminPage() {
       )}
 
       {/* Bulk Edit Modal */}
-      <Modal
+      <LazyModal
         isOpen={showBulkModal}
         onClose={() => setShowBulkModal(false)}
         title="Bulk Edit Salaries"
@@ -537,10 +544,10 @@ export default function AdminPage() {
             />
           </div>
         </div>
-      </Modal>
+      </LazyModal>
 
       {/* Edit User Modal */}
-      <Modal
+      <LazyModal
         isOpen={showEditModal}
         onClose={() => setShowEditModal(false)}
         title={`Edit User: ${editingUser?.name}`}
@@ -585,7 +592,7 @@ export default function AdminPage() {
             </div>
           </div>
         )}
-      </Modal>
+      </LazyModal>
     </Layout>
   );
 }

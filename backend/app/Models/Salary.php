@@ -220,6 +220,35 @@ class Salary extends Model
     }
 
     /**
+     * Scope for high-performance analytics queries.
+     */
+    public function scopeForAnalytics($query)
+    {
+        return $query->select([
+            'salary_euros', 'commission', 'displayed_salary', 
+            'local_currency_code', 'created_at'
+        ]);
+    }
+
+    /**
+     * Scope for salary range queries with index optimization.
+     */
+    public function scopeInRange($query, float $min, float $max)
+    {
+        return $query->whereBetween('salary_euros', [$min, $max])
+                    ->orderBy('salary_euros');
+    }
+
+    /**
+     * Scope for recent salary updates.
+     */
+    public function scopeRecentlyUpdated($query, int $days = 30)
+    {
+        return $query->where('updated_at', '>=', now()->subDays($days))
+                    ->orderBy('updated_at', 'desc');
+    }
+
+    /**
      * Scope for statistics queries with minimal data.
      */
     public function scopeForStats($query)

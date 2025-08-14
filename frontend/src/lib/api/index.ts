@@ -1,8 +1,10 @@
 // Main API exports
-export { apiClient, ApiError, NetworkError, ValidationError } from './client';
-export { userApi, userUtils } from './user';
-export { adminApi, adminUtils } from './admin';
-export { salaryApi } from './salary'; // Legacy - deprecated
+export { ApiError, NetworkError, ValidationError } from './client';
+import { userApi, userUtils } from './user';
+import { adminApi, adminUtils } from './admin';
+import { salaryApi } from './salary'; // Legacy - deprecated
+
+export { userApi, userUtils, adminApi, adminUtils, salaryApi };
 
 // Error handling utilities
 export {
@@ -39,7 +41,7 @@ export type {
 } from './types';
 
 // Re-export commonly used functions
-export { apiClient as api } from './client';
+export { apiClient } from './client';
 
 // Convenience exports for common operations
 export const api = {

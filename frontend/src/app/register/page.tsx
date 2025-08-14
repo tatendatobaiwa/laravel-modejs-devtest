@@ -14,7 +14,7 @@ import { CreateUserRequest } from '@/lib/api/types';
 import { ValidationError, ApiError } from '@/lib/api/client';
 import { getErrorInfo } from '@/lib/api/errors';
 
-interface RegistrationFormData {
+interface RegistrationFormData extends Record<string, unknown> {
   name: string;
   email: string;
   salary_local_currency: string;
@@ -325,7 +325,7 @@ export default function RegisterPage() {
           maxSize={5 * 1024 * 1024}
           progress={fileUpload.progress}
           isUploading={fileUpload.isUploading}
-          error={fileUpload.error}
+          error={fileUpload.error || undefined}
           selectedFile={fileUpload.file}
           onRemoveFile={fileUpload.removeFile}
           onRetry={handleRetryUpload}

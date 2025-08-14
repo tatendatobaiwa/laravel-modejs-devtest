@@ -24,11 +24,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
             'admin' => \App\Http\Middleware\AdminMiddleware::class,
             'security.headers' => \App\Http\Middleware\SecurityHeadersMiddleware::class,
+            'performance.monitor' => \App\Http\Middleware\PerformanceMonitoringMiddleware::class,
         ]);
 
-        // Apply security headers to all API routes
+        // Apply security headers and performance monitoring to all API routes
         $middleware->api(append: [
             \App\Http\Middleware\SecurityHeadersMiddleware::class,
+            \App\Http\Middleware\PerformanceMonitoringMiddleware::class,
         ]);
 
         $middleware->throttleApi('api');

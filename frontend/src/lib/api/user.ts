@@ -43,7 +43,7 @@ export const userApi = {
     // Use file upload method if file is present and progress callback is provided
     if (userData.document && onProgress) {
       return apiClient.uploadFile<ApiResponse<UserWithSalary>>(
-        '/users',
+        '/v1/public/users',
         userData.document,
         {
           name: userData.name,
@@ -55,7 +55,7 @@ export const userApi = {
       );
     }
 
-    return apiClient.post<ApiResponse<UserWithSalary>>('/users', formData);
+    return apiClient.post<ApiResponse<UserWithSalary>>('/v1/public/users', formData);
   },
 
   /**
@@ -66,7 +66,7 @@ export const userApi = {
     userData: UpdateUserRequest,
     optimistic: boolean = false
   ): Promise<ApiResponse<UserWithSalary>> {
-    const endpoint = `/users/${id}`;
+    const endpoint = `/v1/users/${id}`;
     
     if (optimistic) {
       // For optimistic updates, we might want to implement a queue system
@@ -81,21 +81,21 @@ export const userApi = {
    * Get user by ID with full salary information
    */
   async getById(id: number): Promise<ApiResponse<UserWithSalary>> {
-    return apiClient.get<ApiResponse<UserWithSalary>>(`/users/${id}`);
+    return apiClient.get<ApiResponse<UserWithSalary>>(`/v1/users/${id}`);
   },
 
   /**
    * Get current user profile (requires authentication)
    */
   async getProfile(): Promise<ApiResponse<UserWithSalary>> {
-    return apiClient.get<ApiResponse<UserWithSalary>>('/user/profile');
+    return apiClient.get<ApiResponse<UserWithSalary>>('/v1/user');
   },
 
   /**
    * Update current user profile
    */
   async updateProfile(userData: UpdateUserRequest): Promise<ApiResponse<UserWithSalary>> {
-    return apiClient.put<ApiResponse<UserWithSalary>>('/user/profile', userData);
+    return apiClient.put<ApiResponse<UserWithSalary>>('/v1/user', userData);
   },
 
   /**
@@ -117,7 +117,7 @@ export const userApi = {
       });
     }
 
-    return apiClient.get<PaginatedResponse<UserWithSalary>>('/users/search', searchParams);
+    return apiClient.get<PaginatedResponse<UserWithSalary>>('/v1/admin/users', searchParams);
   },
 
   /**
@@ -130,7 +130,7 @@ export const userApi = {
   ): Promise<ApiResponse<UploadedDocument>> {
     if (onProgress) {
       return apiClient.uploadFile<ApiResponse<UploadedDocument>>(
-        `/users/${userId}/documents`,
+        `/v1/users/${userId}/documents`,
         file,
         {},
         onProgress
@@ -140,21 +140,21 @@ export const userApi = {
     const formData = new FormData();
     formData.append('document', file);
     
-    return apiClient.post<ApiResponse<UploadedDocument>>(`/users/${userId}/documents`, formData);
+    return apiClient.post<ApiResponse<UploadedDocument>>(`/v1/users/${userId}/documents`, formData);
   },
 
   /**
    * Get user documents
    */
   async getDocuments(userId: number): Promise<ApiResponse<UploadedDocument[]>> {
-    return apiClient.get<ApiResponse<UploadedDocument[]>>(`/users/${userId}/documents`);
+    return apiClient.get<ApiResponse<UploadedDocument[]>>(`/v1/users/${userId}/documents`);
   },
 
   /**
    * Delete user document
    */
   async deleteDocument(userId: number, documentId: number): Promise<ApiResponse<void>> {
-    return apiClient.delete<ApiResponse<void>>(`/users/${userId}/documents/${documentId}`);
+    return apiClient.delete<ApiResponse<void>>(`/v1/users/${userId}/documents/${documentId}`);
   },
 
   /**
@@ -166,7 +166,7 @@ export const userApi = {
       params.exclude_user_id = excludeUserId.toString();
     }
     
-    return apiClient.get<ApiResponse<{ available: boolean }>>('/users/check-email', params);
+    return apiClient.get<ApiResponse<{ available: boolean }>>('/v1/users/check-email', params);
   },
 
   /**
@@ -177,7 +177,7 @@ export const userApi = {
     page: number = 1,
     perPage: number = 20
   ): Promise<PaginatedResponse<any>> {
-    return apiClient.get<PaginatedResponse<any>>(`/users/${userId}/salary-history`, {
+    return apiClient.get<PaginatedResponse<any>>(`/v1/users/${userId}/history`, {
       page: page.toString(),
       per_page: perPage.toString(),
     });
@@ -187,7 +187,7 @@ export const userApi = {
    * Export user data (GDPR compliance)
    */
   async exportUserData(userId: number): Promise<ApiResponse<{ download_url: string }>> {
-    return apiClient.get<ApiResponse<{ download_url: string }>>(`/users/${userId}/export`);
+    return apiClient.get<ApiResponse<{ download_url: string }>>(`/v1/users/${userId}/export`);
   },
 
   /**
@@ -195,7 +195,7 @@ export const userApi = {
    */
   async deleteAccount(userId: number, reason?: string): Promise<ApiResponse<void>> {
     const data = reason ? { reason } : {};
-    return apiClient.delete<ApiResponse<void>>(`/users/${userId}`, data);
+    return apiClient.delete<ApiResponse<void>>(`/v1/users/${userId}`);
   },
 };
 

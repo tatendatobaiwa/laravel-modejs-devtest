@@ -26,6 +26,7 @@ class DatabaseOptimizationService
         $cacheKey = 'users_list_' . md5(serialize($filters) . $perPage);
         
         return Cache::remember($cacheKey, self::CACHE_DURATION, function () use ($filters, $perPage) {
+            // Use optimized query with strategic eager loading
             $query = User::query()
                 ->select([
                     'users.id',
@@ -35,15 +36,26 @@ class DatabaseOptimizationService
                     'users.updated_at'
                 ])
                 ->with([
-                    'salary:id,user_id,salary_local_currency,local_currency_code,salary_euros,commission,displayed_salary,effective_date,updated_at'
+                    'salary' => function($q) {
+                        $q->select([
+                            'id', 'user_id', 'salary_local_currency', 'local_currency_code',
+                            'salary_euros', 'commission', 'displayed_salary', 'effective_date', 'updated_at'
+                        ]);
+                    }
                 ])
                 ->withCount(['salaryHistory', 'uploadedDocuments']);
 
-            // Apply filters efficiently
+            // Apply filters efficiently with proper indexing
             $this->applyUserFilters($query, $filters);
 
-            // Optimize ordering
-            $query->orderBy('users.created_at', 'desc');
+            // Optimize ordering with compound indexes
+            if (!empty($filters['sort_by']) && in_array($filters['sort_by'], ['salary_euros', 'commission', 'displayed_salary'])) {
+                $query->leftJoin('salaries', 'users.id', '=', 'salaries.user_id')
+                      ->orderBy("salaries.{$filters['sort_by']}", $filters['sort_direction'] ?? 'desc')
+                      ->select('users.*');
+            } else {
+                $query->orderBy('users.created_at', 'desc');
+            }
 
             return $query->paginate($perPage);
         });
@@ -432,29 +444,296 @@ class DatabaseOptimizationService
                     foreach ($tables as $table) {
                         if (Schema::hasTable($table)) {
                             DB::statement("OPTIMIZE TABLE {$table}");
-                            $results[] = "Optimized table: {$table}";
+                            DB::statement("ANALYZE TABLE {$table}");
+                            $results[] = "Optimized and analyzed table: {$table}";
                         }
+                    }
+                    
+                    // Update query cache if available
+                    try {
+                        DB::statement("FLUSH QUERY CACHE");
+                        $results[] = "Flushed query cache";
+                    } catch (\Exception $e) {
+                        // Query cache might not be available
                     }
                     break;
 
                 case 'pgsql':
-                    DB::statement('VACUUM ANALYZE');
-                    $results[] = 'Ran VACUUM ANALYZE on all tables';
+                    $tables = ['users', 'salaries', 'salary_histories', 'uploaded_documents'];
+                    foreach ($tables as $table) {
+                        if (Schema::hasTable($table)) {
+                            DB::statement("VACUUM ANALYZE {$table}");
+                            $results[] = "Vacuumed and analyzed table: {$table}";
+                        }
+                    }
+                    
+                    // Reindex if needed
+                    DB::statement('REINDEX DATABASE ' . config('database.connections.pgsql.database'));
+                    $results[] = 'Reindexed database';
                     break;
 
                 case 'sqlite':
                     DB::statement('VACUUM');
                     DB::statement('ANALYZE');
-                    $results[] = 'Ran VACUUM and ANALYZE';
+                    DB::statement('PRAGMA optimize');
+                    $results[] = 'Ran VACUUM, ANALYZE, and OPTIMIZE';
                     break;
 
                 default:
                     $results[] = "Optimization not implemented for driver: {$driver}";
             }
+            
+            // Clear application cache after optimization
+            app(\App\Services\CachingService::class)->flushByTags(['statistics', 'users', 'salaries']);
+            $results[] = 'Cleared application cache';
+            
         } catch (\Exception $e) {
             $results[] = "Error during optimization: " . $e->getMessage();
         }
 
         return $results;
     }
-}
+
+    /**
+     * Get query execution plan for debugging slow queries.
+     */
+    public function explainQuery(string $sql, array $bindings = []): array
+    {
+        $driver = DB::getDriverName();
+        
+        try {
+            switch ($driver) {
+                case 'mysql':
+                    $plan = DB::select("EXPLAIN FORMAT=JSON {$sql}", $bindings);
+                    return json_decode($plan[0]->EXPLAIN, true);
+                    
+                case 'pgsql':
+                    $plan = DB::select("EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) {$sql}", $bindings);
+                    return $plan[0]->{'QUERY PLAN'};
+                    
+                case 'sqlite':
+                    return DB::select("EXPLAIN QUERY PLAN {$sql}", $bindings);
+                    
+                default:
+                    return ['error' => "Query plan not supported for driver: {$driver}"];
+            }
+        } catch (\Exception $e) {
+            return ['error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Monitor slow queries and suggest optimizations.
+     */
+    public function getSlowQueryAnalysis(): array
+    {
+        $driver = DB::getDriverName();
+        
+        try {
+            switch ($driver) {
+                case 'mysql':
+                    return $this->getMySQLSlowQueries();
+                    
+                case 'pgsql':
+                    return $this->getPostgreSQLSlowQueries();
+                    
+                default:
+                    return ['message' => "Slow query analysis not available for driver: {$driver}"];
+            }
+        } catch (\Exception $e) {
+            return ['error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Get MySQL slow query analysis.
+     */
+    private function getMySQLSlowQueries(): array
+    {
+        $slowQueries = DB::select("
+            SELECT 
+                query_time,
+                lock_time,
+                rows_sent,
+                rows_examined,
+                sql_text
+            FROM mysql.slow_log 
+            WHERE start_time > DATE_SUB(NOW(), INTERVAL 1 HOUR)
+            ORDER BY query_time DESC 
+            LIMIT 10
+        ");
+        
+        return [
+            'slow_queries' => $slowQueries,
+            'recommendations' => $this->generateOptimizationRecommendations($slowQueries),
+        ];
+    }
+
+    /**
+     * Get PostgreSQL slow query analysis.
+     */
+    private function getPostgreSQLSlowQueries(): array
+    {
+        // This would require pg_stat_statements extension
+        try {
+            $slowQueries = DB::select("
+                SELECT 
+                    query,
+                    calls,
+                    total_time,
+                    mean_time,
+                    rows
+                FROM pg_stat_statements 
+                WHERE mean_time > 100
+                ORDER BY mean_time DESC 
+                LIMIT 10
+            ");
+            
+            return [
+                'slow_queries' => $slowQueries,
+                'recommendations' => $this->generateOptimizationRecommendations($slowQueries),
+            ];
+        } catch (\Exception $e) {
+            return ['message' => 'pg_stat_statements extension not available'];
+        }
+    }
+
+    /**
+     * Generate optimization recommendations based on slow queries.
+     */
+    private function generateOptimizationRecommendations(array $slowQueries): array
+    {
+        $recommendations = [];
+        
+        foreach ($slowQueries as $query) {
+            $sql = $query->sql_text ?? $query->query ?? '';
+            
+            if (stripos($sql, 'SELECT') !== false && stripos($sql, 'WHERE') !== false) {
+                if (stripos($sql, 'ORDER BY') !== false && stripos($sql, 'LIMIT') === false) {
+                    $recommendations[] = 'Consider adding LIMIT to ORDER BY queries to improve performance';
+                }
+                
+                if (stripos($sql, 'LIKE') !== false) {
+                    $recommendations[] = 'Consider using full-text search instead of LIKE for text searches';
+                }
+                
+                if (stripos($sql, 'JOIN') !== false && stripos($sql, 'INDEX') === false) {
+                    $recommendations[] = 'Ensure proper indexes exist for JOIN conditions';
+                }
+            }
+        }
+        
+        return array_unique($recommendations);
+    }
+}    /**
+
+     * Optimize MySQL tables with comprehensive maintenance.
+     */
+    private function optimizeMySQLTables(): array
+    {
+        $results = [];
+        $tables = ['users', 'salaries', 'salary_histories', 'uploaded_documents'];
+        
+        foreach ($tables as $table) {
+            if (Schema::hasTable($table)) {
+                // Check table status before optimization
+                $status = DB::select("SHOW TABLE STATUS LIKE '{$table}'")[0] ?? null;
+                
+                if ($status) {
+                    $results[] = "Table {$table} - Rows: {$status->Rows}, Data Length: " . 
+                                $this->formatBytes($status->Data_length);
+                }
+                
+                // Optimize table
+                DB::statement("OPTIMIZE TABLE {$table}");
+                $results[] = "Optimized table: {$table}";
+                
+                // Analyze table for better query planning
+                DB::statement("ANALYZE TABLE {$table}");
+                $results[] = "Analyzed table: {$table}";
+                
+                // Check for fragmentation
+                if ($status && $status->Data_free > 0) {
+                    $results[] = "Table {$table} had " . $this->formatBytes($status->Data_free) . 
+                                " of fragmented space";
+                }
+            }
+        }
+        
+        // Update query cache if enabled
+        try {
+            DB::statement("RESET QUERY CACHE");
+            $results[] = "Query cache reset";
+        } catch (\Exception $e) {
+            $results[] = "Query cache reset failed: " . $e->getMessage();
+        }
+        
+        return $results;
+    }
+
+    /**
+     * Optimize PostgreSQL tables with comprehensive maintenance.
+     */
+    private function optimizePostgreSQLTables(): array
+    {
+        $results = [];
+        
+        // Full vacuum and analyze
+        DB::statement('VACUUM ANALYZE');
+        $results[] = 'Ran VACUUM ANALYZE on all tables';
+        
+        // Reindex all tables for better performance
+        $tables = ['users', 'salaries', 'salary_histories', 'uploaded_documents'];
+        foreach ($tables as $table) {
+            if (Schema::hasTable($table)) {
+                try {
+                    DB::statement("REINDEX TABLE {$table}");
+                    $results[] = "Reindexed table: {$table}";
+                } catch (\Exception $e) {
+                    $results[] = "Failed to reindex {$table}: " . $e->getMessage();
+                }
+            }
+        }
+        
+        // Update table statistics
+        DB::statement('ANALYZE');
+        $results[] = 'Updated table statistics';
+        
+        return $results;
+    }
+
+    /**
+     * Optimize SQLite tables.
+     */
+    private function optimizeSQLiteTables(): array
+    {
+        $results = [];
+        
+        // Vacuum to reclaim space and defragment
+        DB::statement('VACUUM');
+        $results[] = 'Ran VACUUM to reclaim space';
+        
+        // Analyze for query optimization
+        DB::statement('ANALYZE');
+        $results[] = 'Ran ANALYZE for query optimization';
+        
+        // Optimize pragma settings
+        DB::statement('PRAGMA optimize');
+        $results[] = 'Ran PRAGMA optimize';
+        
+        return $results;
+    }
+
+    /**
+     * Format bytes into human readable format.
+     */
+    private function formatBytes(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        
+        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
+            $bytes /= 1024;
+        }
+        
+        return round($bytes, 2) . ' ' . $units[$i];
+    }
